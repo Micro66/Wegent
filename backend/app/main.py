@@ -134,7 +134,6 @@ async def lifespan(app: FastAPI):
                     logger.info("✓ Alembic migrations completed successfully")
                 except subprocess.CalledProcessError as e:
                     logger.error(f"✗ Error running Alembic migrations: {e}")
-                    raise
                 except Exception as e:
                     logger.error(f"✗ Unexpected error running Alembic migrations: {e}")
                     raise
@@ -194,6 +193,9 @@ async def lifespan(app: FastAPI):
 
         except Exception as e:
             logger.error(f"✗ Startup initialization failed: {e}")
+            # Re-raise the exception to terminate startup
+            # This ensures the application does not start with a broken database state
+            raise
         finally:
             # Release lock
             redis_client.delete(STARTUP_LOCK_KEY)

@@ -64,6 +64,7 @@ from app.services.chat.operations import (
 )
 from app.services.chat.rag import process_context_and_rag
 from app.services.chat.storage import session_manager
+from app.services.chat.storage.db import get_db_session, run_sync_in_executor
 from shared.telemetry.context import (
     set_request_context,
     set_user_context,
@@ -336,76 +337,19 @@ class ChatNamespace(socketio.AsyncNamespace):
         # If after_message_id is provided, only fetch messages after that ID (incremental sync)
         # Otherwise, fetch all messages (initial join)
         subtasks_dict = None
-        db = SessionLocal()
         try:
+            subtasks_dict = await run_sync_in_executor(
+                _fetch_subtasks_for_task_join,
+                payload.task_id,
+                user_id,
+                payload.after_message_id,
+            )
             if payload.after_message_id is not None:
-                # Incremental sync: only fetch messages after the cursor
-                from app.services.context import context_service
-
-                subtasks = (
-                    db.query(Subtask)
-                    .filter(
-                        Subtask.task_id == payload.task_id,
-                        Subtask.message_id > payload.after_message_id,
-                    )
-                    .order_by(Subtask.message_id.asc())
-                    .all()
-                )
-
-                # Convert to dict format matching task detail API
-                subtasks_dict = []
-                for st in subtasks:
-                    # Get contexts for this subtask
-                    contexts_briefs = context_service.get_briefs_by_subtask(db, st.id)
-                    contexts_list = [
-                        ctx.model_dump(mode="json") for ctx in contexts_briefs
-                    ]
-
-                    subtask_dict = {
-                        "id": st.id,
-                        "message_id": st.message_id,
-                        "role": st.role.value,
-                        "prompt": st.prompt,
-                        "result": st.result,
-                        "status": st.status.value,
-                        "progress": st.progress,
-                        "created_at": (
-                            st.created_at.isoformat() if st.created_at else None
-                        ),
-                        "updated_at": (
-                            st.updated_at.isoformat() if st.updated_at else None
-                        ),
-                        "completed_at": (
-                            st.completed_at.isoformat() if st.completed_at else None
-                        ),
-                        "contexts": contexts_list,
-                        "sender": None,
-                    }
-
-                    # Add sender info for user messages
-                    if st.role == SubtaskRole.USER and st.user_id:
-                        user = db.query(User).filter(User.id == st.user_id).first()
-                        if user:
-                            subtask_dict["sender"] = {
-                                "user_id": user.id,
-                                "user_name": user.user_name,
-                                "avatar": user.avatar,
-                            }
-
-                    subtasks_dict.append(subtask_dict)
-
                 logger.info(
-                    f"[WS] task:join incremental sync: fetched {len(subtasks_dict)} new messages "
+                    f"[WS] task:join incremental sync: fetched {len(subtasks_dict) if subtasks_dict else 0} new messages "
                     f"after message_id={payload.after_message_id} for task_id={payload.task_id}"
                 )
             else:
-                # Full sync: fetch all messages using existing service
-                from app.services.adapters.task_kinds import task_kinds_service
-
-                task_detail = task_kinds_service.get_task_detail(
-                    db, task_id=payload.task_id, user_id=user_id
-                )
-                subtasks_dict = task_detail.get("subtasks")
                 logger.info(
                     f"[WS] task:join full sync: fetched {len(subtasks_dict) if subtasks_dict else 0} "
                     f"subtasks for task_id={payload.task_id}"
@@ -413,8 +357,6 @@ class ChatNamespace(socketio.AsyncNamespace):
         except Exception as e:
             logger.exception(f"[WS] task:join error fetching subtasks: {e}")
             # Continue without subtasks - frontend can fall back to API call
-        finally:
-            db.close()
 
         # Check for active streaming
         logger.info(
@@ -517,50 +459,8 @@ class ChatNamespace(socketio.AsyncNamespace):
             logger.error("[WS] chat:send error: Not authenticated")
             return {"error": "Not authenticated"}
 
-        # Handle pipeline stage confirmation action
-        # Pipeline confirm is essentially "user sends message, AI responds"
-        # So we use prepare_pipeline_confirm for preprocessing, then continue with normal flow
-        pipeline_info = None
-        if payload.action == "pipeline:confirm":
-            from app.services.adapters.pipeline_stage import pipeline_stage_service
-
-            db_for_pipeline = SessionLocal()
-            try:
-                pipeline_info = pipeline_stage_service.pipeline_confirm(
-                    db=db_for_pipeline,
-                    task_id=payload.task_id,
-                    user_id=user_id,
-                )
-
-                if not pipeline_info.get("success"):
-                    logger.error(
-                        f"[WS] pipeline:confirm preparation failed: {pipeline_info.get('error')}"
-                    )
-                    return {
-                        "error": pipeline_info.get("error", "Pipeline confirm failed")
-                    }
-
-                # If pipeline is complete, return immediately
-                if pipeline_info.get("is_pipeline_complete"):
-                    logger.info(
-                        f"[WS] pipeline:confirm: Pipeline completed for task {payload.task_id}"
-                    )
-                    return {
-                        "task_id": payload.task_id,
-                        "current_stage": pipeline_info.get("total_stages", 0) - 1,
-                        "total_stages": pipeline_info.get("total_stages", 0),
-                        "next_stage_name": None,
-                        "pipeline_completed": True,
-                    }
-
-                logger.info(
-                    f"[WS] pipeline:confirm: Prepared for next stage {pipeline_info.get('next_stage_index')} "
-                    f"(bot_id={pipeline_info.get('next_stage_bot_id')}) for task {payload.task_id}"
-                )
-            finally:
-                db_for_pipeline.close()
-
         db = SessionLocal()
+        pipeline_info = None
         try:
             # Get user
             user = db.query(User).filter(User.id == user_id).first()
@@ -586,6 +486,68 @@ class ChatNamespace(socketio.AsyncNamespace):
                 )
                 return {"error": "Team not found"}
             logger.info(f"[WS] chat:send team found: {team.name} (id={team.id})")
+
+            # Handle pipeline mode
+            team_crd = Team.model_validate(team.json)
+            if team_crd.spec.collaborationModel == "pipeline":
+                from app.services.adapters.pipeline_stage import pipeline_stage_service
+
+                # pipeline:confirm only updates currentStage (+1)
+                if payload.action == "pipeline:confirm":
+                    confirm_result = pipeline_stage_service.pipeline_confirm(
+                        db=db,
+                        task_id=payload.task_id,
+                        user_id=user_id,
+                    )
+
+                    if not confirm_result.get("success"):
+                        logger.error(
+                            f"[WS] pipeline:confirm failed: {confirm_result.get('error')}"
+                        )
+                        return {
+                            "error": confirm_result.get(
+                                "error", "Pipeline confirm failed"
+                            )
+                        }
+
+                    # Emit task:status event to notify frontend that task status changed
+                    # This triggers PipelineStageIndicator to re-fetch pipeline stage info
+                    task_room = f"task:{payload.task_id}"
+                    await self.emit(
+                        ServerEvents.TASK_STATUS,
+                        {
+                            "task_id": payload.task_id,
+                            "status": "RUNNING",
+                            "progress": 0,
+                        },
+                        room=task_room,
+                    )
+                    logger.info(
+                        f"[WS] pipeline:confirm emitted task:status PENDING for task {payload.task_id}"
+                    )
+
+                # Get pipeline info (unified logic for all pipeline operations)
+                pipeline_info = pipeline_stage_service.get_pipeline_info(
+                    db=db,
+                    team=team,
+                    task_id=payload.task_id,
+                )
+                if pipeline_info:
+                    # Check if pipeline is complete
+                    if pipeline_info.get("is_pipeline_complete"):
+                        logger.info(
+                            f"[WS] chat:send: Pipeline completed for task {payload.task_id}"
+                        )
+                        return {
+                            "task_id": payload.task_id,
+                            "current_stage": pipeline_info.get("current_stage"),
+                            "total_stages": pipeline_info.get("total_stages"),
+                            "pipeline_completed": True,
+                        }
+                    logger.info(
+                        f"[WS] chat:send pipeline info: bot_ids={pipeline_info.get('bot_ids')}, "
+                        f"current_stage={pipeline_info.get('current_stage')}"
+                    )
 
             # Import existing helpers from service layer
             from app.api.endpoints.adapter.chat import StreamChatRequest
@@ -662,12 +624,12 @@ class ChatNamespace(socketio.AsyncNamespace):
                     for s in payload.additional_skills
                 ]
 
-            # For pipeline confirm, use the next stage bot_id from pipeline_info
+            # For pipeline mode, use the bot_ids from pipeline_info
             pipeline_bot_ids = None
-            if pipeline_info and pipeline_info.get("next_stage_bot_id"):
-                pipeline_bot_ids = [pipeline_info["next_stage_bot_id"]]
+            if pipeline_info and pipeline_info.get("bot_ids"):
+                pipeline_bot_ids = pipeline_info["bot_ids"]
                 logger.info(
-                    f"[WS] chat:send pipeline:confirm using pipeline_bot_ids={pipeline_bot_ids}"
+                    f"[WS] chat:send pipeline mode using pipeline_bot_ids={pipeline_bot_ids}"
                 )
 
             # Convert generate_params to dict if present
@@ -678,6 +640,11 @@ class ChatNamespace(socketio.AsyncNamespace):
                     "ratio": payload.generate_params.ratio,
                     "duration": payload.generate_params.duration,
                 }
+
+            # For pipeline confirm, get the previous stage's bot_id for session management
+            previous_bot_id = None
+            if pipeline_info:
+                previous_bot_id = pipeline_info.get("current_stage_bot_id")
 
             params = TaskCreationParams(
                 message=payload.message,
@@ -695,6 +662,10 @@ class ChatNamespace(socketio.AsyncNamespace):
                 knowledge_base_id=payload.knowledge_base_id,
                 additional_skills=additional_skills_dicts,
                 pipeline_bot_ids=pipeline_bot_ids,
+                # Pipeline mode: pass previous stage's bot_id for session management
+                # TaskRequestBuilder will compare this with current bot_id to determine
+                # if a new session is needed (different bot = new session)
+                previous_bot_id=previous_bot_id,
                 device_id=payload.device_id,
                 generate_params=generate_params_dict,
             )
@@ -859,6 +830,7 @@ class ChatNamespace(socketio.AsyncNamespace):
                             namespace=self,
                             user_subtask_id=user_subtask_id_for_context,  # Pass user subtask ID for unified context processing
                             auth_token=auth_token,  # Pass original JWT token from WebSocket session
+                            previous_bot_id=previous_bot_id,  # Pipeline mode: previous stage's bot_id for session management
                         )
                     except Exception as e:
                         logger.exception(
@@ -1005,29 +977,27 @@ class ChatNamespace(socketio.AsyncNamespace):
             logger.error("[WS] chat:cancel error: Not authenticated")
             return {"error": "Not authenticated"}
 
-        db = SessionLocal()
         try:
-            # Verify ownership
-            subtask = (
-                db.query(Subtask)
-                .filter(
-                    Subtask.id == payload.subtask_id,
-                )
-                .first()
+            # Verify ownership - run in executor to avoid blocking
+            subtask_info = await run_sync_in_executor(
+                _get_subtask_for_cancel, payload.subtask_id
             )
 
-            if not subtask:
+            if not subtask_info:
                 logger.error(
                     f"[WS] chat:cancel error: Subtask not found subtask_id={payload.subtask_id} user_id={user_id}"
                 )
                 return {"error": "Subtask not found"}
 
-            if subtask.status not in [SubtaskStatus.PENDING, SubtaskStatus.RUNNING]:
+            if subtask_info["status"] not in [
+                SubtaskStatus.PENDING,
+                SubtaskStatus.RUNNING,
+            ]:
                 logger.warning(
-                    f"[WS] chat:cancel error: Cannot cancel subtask in {subtask.status.value} state"
+                    f"[WS] chat:cancel error: Cannot cancel subtask in {subtask_info['status'].value} state"
                 )
                 return {
-                    "error": f"Cannot cancel subtask in {subtask.status.value} state"
+                    "error": f"Cannot cancel subtask in {subtask_info['status'].value} state"
                 }
 
             # Use ExecutionDispatcher to handle cancel request
@@ -1037,16 +1007,15 @@ class ChatNamespace(socketio.AsyncNamespace):
 
             # Determine device_id if this is a device task
             device_id = None
-            is_device_task = subtask.executor_name and subtask.executor_name.startswith(
-                "device-"
-            )
+            executor_name = subtask_info.get("executor_name")
+            is_device_task = executor_name and executor_name.startswith("device-")
             if is_device_task:
-                device_id = subtask.executor_name[7:]  # Remove "device-" prefix
+                device_id = executor_name[7:]  # Remove "device-" prefix
 
             # Build minimal ExecutionRequest for cancel routing
             # Router only needs bot[0].shell_type and user.id
             cancel_request = ExecutionRequest(
-                task_id=subtask.task_id,
+                task_id=subtask_info["task_id"],
                 subtask_id=payload.subtask_id,
                 bot=[{"shell_type": payload.shell_type or "Chat"}],
                 user={"id": user_id},
@@ -1054,9 +1023,9 @@ class ChatNamespace(socketio.AsyncNamespace):
 
             logger.info(
                 f"[WS] chat:cancel Dispatching cancel via ExecutionDispatcher: "
-                f"task_id={subtask.task_id}, subtask_id={payload.subtask_id}, "
+                f"task_id={subtask_info['task_id']}, subtask_id={payload.subtask_id}, "
                 f"shell_type={payload.shell_type}, device_id={device_id}, "
-                f"executor_name={subtask.executor_name}"
+                f"executor_name={executor_name}"
             )
 
             # Send cancel request via dispatcher
@@ -1084,10 +1053,7 @@ class ChatNamespace(socketio.AsyncNamespace):
 
         except Exception as e:
             logger.error(f"[WS] chat:cancel exception: {e}", exc_info=True)
-            db.rollback()
             return {"error": f"Internal server error: {str(e)}"}
-        finally:
-            db.close()
 
     async def on_task_close_session(self, sid: str, data: dict) -> dict:
         """
@@ -1119,48 +1085,19 @@ class ChatNamespace(socketio.AsyncNamespace):
             logger.error("[WS] task:close-session error: Missing task_id")
             return {"error": "Missing task_id"}
 
-        db = SessionLocal()
         try:
-            # Get the task to find the executor_name (device ID)
-            from app.models.task import TaskResource
-
-            task = (
-                db.query(TaskResource)
-                .filter(
-                    TaskResource.id == task_id,
-                    TaskResource.kind == "Task",
-                    TaskResource.is_active == TaskResource.STATE_ACTIVE,
-                )
-                .first()
+            # Get device info - run in executor to avoid blocking
+            device_info = await run_sync_in_executor(
+                _get_device_info_for_close_session, task_id
             )
 
-            if not task:
+            if device_info.get("error"):
                 logger.error(
-                    f"[WS] task:close-session error: Task not found task_id={task_id} user_id={user_id}"
+                    f"[WS] task:close-session error: {device_info['error']} task_id={task_id} user_id={user_id}"
                 )
-                return {"error": "Task not found"}
+                return {"error": device_info["error"]}
 
-            # Get the latest subtask with device executor
-            # Note: A task may have mixed subtasks - some from device mode (executor_name starts with "device-")
-            # and some from chat mode (no executor_name). We need to find the device subtask specifically.
-            subtask = (
-                db.query(Subtask)
-                .filter(
-                    Subtask.task_id == task_id,
-                    Subtask.executor_name.like("device-%"),
-                )
-                .order_by(Subtask.id.desc())
-                .first()
-            )
-
-            if not subtask:
-                logger.error(
-                    f"[WS] task:close-session error: No device executor found for task_id={task_id}"
-                )
-                return {"error": "No device executor found for this task"}
-
-            # Extract device_id from executor_name (format: "device-{device_id}")
-            device_id = subtask.executor_name[7:]  # Remove "device-" prefix
+            device_id = device_info["device_id"]
             device_room = f"device:{user_id}:{device_id}"
 
             logger.info(
@@ -1187,8 +1124,6 @@ class ChatNamespace(socketio.AsyncNamespace):
         except Exception as e:
             logger.error(f"[WS] task:close-session exception: {e}", exc_info=True)
             return {"error": f"Internal server error: {str(e)}"}
-        finally:
-            db.close()
 
     @auto_task_context(
         ChatRetryPayload, task_id_field="task_id", subtask_id_field="subtask_id"
@@ -1498,39 +1433,12 @@ class ChatNamespace(socketio.AsyncNamespace):
         if not await can_access_task(user_id, payload.task_id):
             return {"error": "Access denied"}
 
-        db = SessionLocal()
-        try:
-            # Get messages after the specified ID
-            subtasks = (
-                db.query(Subtask)
-                .filter(
-                    Subtask.task_id == payload.task_id,
-                    Subtask.message_id > payload.after_message_id,
-                )
-                .order_by(Subtask.message_id.asc())
-                .all()
-            )
+        # Fetch messages - run in executor to avoid blocking
+        messages = await run_sync_in_executor(
+            _fetch_history_messages, payload.task_id, payload.after_message_id
+        )
 
-            messages = []
-            for st in subtasks:
-                msg = {
-                    "subtask_id": st.id,
-                    "message_id": st.message_id,
-                    "role": st.role.value,
-                    "content": (
-                        st.prompt
-                        if st.role == SubtaskRole.USER
-                        else (st.result.get("value", "") if st.result else "")
-                    ),
-                    "status": st.status.value,
-                    "created_at": st.created_at.isoformat() if st.created_at else None,
-                }
-                messages.append(msg)
-
-            return {"messages": messages}
-
-        finally:
-            db.close()
+        return {"messages": messages}
 
     # ============================================================
     # Generic Skill Events
@@ -1613,3 +1521,202 @@ def register_chat_namespace(sio: socketio.AsyncServer):
 def get_device_id(task):
     task_crd = Task.model_validate(task.json)
     return task_crd.spec.device_id if task_crd.spec else None
+
+
+# ============================================================
+# Sync helper functions for run_sync_in_executor
+# These functions run synchronous database operations in a thread pool
+# to avoid blocking the event loop
+# ============================================================
+
+
+def _fetch_subtasks_for_task_join(
+    task_id: int, user_id: int, after_message_id: Optional[int]
+) -> Optional[list]:
+    """
+    Fetch subtasks for task:join event.
+
+    This is a sync helper function that runs in a thread pool executor.
+
+    Args:
+        task_id: Task ID
+        user_id: User ID for full sync
+        after_message_id: Message ID cursor for incremental sync (None for full sync)
+
+    Returns:
+        List of subtask dicts or None on error
+    """
+    with get_db_session() as db:
+        if after_message_id is not None:
+            # Incremental sync: only fetch messages after the cursor
+            from app.services.context import context_service
+
+            subtasks = (
+                db.query(Subtask)
+                .filter(
+                    Subtask.task_id == task_id,
+                    Subtask.message_id > after_message_id,
+                )
+                .order_by(Subtask.message_id.asc())
+                .all()
+            )
+
+            # Convert to dict format matching task detail API
+            subtasks_dict = []
+            for st in subtasks:
+                # Get contexts for this subtask
+                contexts_briefs = context_service.get_briefs_by_subtask(db, st.id)
+                contexts_list = [ctx.model_dump(mode="json") for ctx in contexts_briefs]
+
+                subtask_dict = {
+                    "id": st.id,
+                    "message_id": st.message_id,
+                    "role": st.role.value,
+                    "prompt": st.prompt,
+                    "result": st.result,
+                    "status": st.status.value,
+                    "progress": st.progress,
+                    "created_at": (
+                        st.created_at.isoformat() if st.created_at else None
+                    ),
+                    "updated_at": (
+                        st.updated_at.isoformat() if st.updated_at else None
+                    ),
+                    "completed_at": (
+                        st.completed_at.isoformat() if st.completed_at else None
+                    ),
+                    "contexts": contexts_list,
+                    "sender": None,
+                }
+
+                # Add sender info for user messages
+                if st.role == SubtaskRole.USER and st.user_id:
+                    user = db.query(User).filter(User.id == st.user_id).first()
+                    if user:
+                        subtask_dict["sender"] = {
+                            "user_id": user.id,
+                            "user_name": user.user_name,
+                            "avatar": user.avatar,
+                        }
+
+                subtasks_dict.append(subtask_dict)
+
+            return subtasks_dict
+        else:
+            # Full sync: fetch all messages using existing service
+            from app.services.adapters.task_kinds import task_kinds_service
+
+            task_detail = task_kinds_service.get_task_detail(
+                db, task_id=task_id, user_id=user_id
+            )
+            return task_detail.get("subtasks")
+
+
+def _get_subtask_for_cancel(subtask_id: int) -> Optional[dict]:
+    """
+    Get subtask info for chat:cancel event.
+
+    Args:
+        subtask_id: Subtask ID
+
+    Returns:
+        Dict with subtask info or None if not found
+    """
+    with get_db_session() as db:
+        subtask = db.query(Subtask).filter(Subtask.id == subtask_id).first()
+
+        if not subtask:
+            return None
+
+        return {
+            "id": subtask.id,
+            "task_id": subtask.task_id,
+            "status": subtask.status,
+            "executor_name": subtask.executor_name,
+        }
+
+
+def _get_device_info_for_close_session(task_id: int) -> Optional[dict]:
+    """
+    Get device info for task:close-session event.
+
+    Args:
+        task_id: Task ID
+
+    Returns:
+        Dict with device_id and user_id, or None if not found
+    """
+    with get_db_session() as db:
+        # Get the task to verify it exists
+        task = (
+            db.query(TaskResource)
+            .filter(
+                TaskResource.id == task_id,
+                TaskResource.kind == "Task",
+                TaskResource.is_active == TaskResource.STATE_ACTIVE,
+            )
+            .first()
+        )
+
+        if not task:
+            return {"error": "Task not found"}
+
+        # Get the latest subtask with device executor
+        subtask = (
+            db.query(Subtask)
+            .filter(
+                Subtask.task_id == task_id,
+                Subtask.executor_name.like("device-%"),
+            )
+            .order_by(Subtask.id.desc())
+            .first()
+        )
+
+        if not subtask:
+            return {"error": "No device executor found for this task"}
+
+        # Extract device_id from executor_name (format: "device-{device_id}")
+        device_id = subtask.executor_name[7:]  # Remove "device-" prefix
+
+        return {"device_id": device_id}
+
+
+def _fetch_history_messages(task_id: int, after_message_id: int) -> list:
+    """
+    Fetch history messages for history:sync event.
+
+    Args:
+        task_id: Task ID
+        after_message_id: Message ID cursor
+
+    Returns:
+        List of message dicts
+    """
+    with get_db_session() as db:
+        subtasks = (
+            db.query(Subtask)
+            .filter(
+                Subtask.task_id == task_id,
+                Subtask.message_id > after_message_id,
+            )
+            .order_by(Subtask.message_id.asc())
+            .all()
+        )
+
+        messages = []
+        for st in subtasks:
+            msg = {
+                "subtask_id": st.id,
+                "message_id": st.message_id,
+                "role": st.role.value,
+                "content": (
+                    st.prompt
+                    if st.role == SubtaskRole.USER
+                    else (st.result.get("value", "") if st.result else "")
+                ),
+                "status": st.status.value,
+                "created_at": st.created_at.isoformat() if st.created_at else None,
+            }
+            messages.append(msg)
+
+        return messages

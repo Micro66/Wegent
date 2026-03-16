@@ -6,7 +6,7 @@
 
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { useSearchParams } from 'next/navigation'
-import { teamService } from '@/features/tasks/service/teamService'
+import { useTeamContext } from '@/contexts/TeamContext'
 import TopNavigation from '@/features/layout/TopNavigation'
 import {
   TaskSidebar,
@@ -28,6 +28,7 @@ import { useUser } from '@/features/common/UserContext'
 import { useSearchShortcut } from '@/features/tasks/hooks/useSearchShortcut'
 import { Workbench } from '@/features/tasks/components'
 import { ChatArea } from '@/features/tasks/components/chat'
+import { RemoteWorkspaceEntry } from '@/features/tasks/components/remote-workspace'
 import { paths } from '@/config/paths'
 
 /**
@@ -47,12 +48,17 @@ export function CodePageDesktop() {
   const taskId = searchParams.get('taskId')
   const hasTaskId = !!taskId
 
-  // Team state from service
-  const { teams, isTeamsLoading, refreshTeams } = teamService.useTeams()
+  // Team state from context (centralized to avoid duplicate API calls)
+  const { teams, isTeamsLoading, refreshTeams } = useTeamContext()
 
   // Task context for workbench data
-  const { selectedTaskDetail, setSelectedTask, refreshTasks, refreshSelectedTaskDetail } =
-    useTaskContext()
+  const {
+    selectedTask,
+    selectedTaskDetail,
+    setSelectedTask,
+    refreshTasks,
+    refreshSelectedTaskDetail,
+  } = useTaskContext()
 
   // Chat stream context for clearAllStreams
   const { clearAllStreams } = useChatStreamContext()
@@ -230,6 +236,12 @@ export function CodePageDesktop() {
           onMembersChanged={handleMembersChanged}
           isSidebarCollapsed={isCollapsed}
         >
+          {(selectedTask?.id || selectedTaskDetail?.id) && (
+            <RemoteWorkspaceEntry
+              taskId={selectedTask?.id || selectedTaskDetail?.id}
+              taskStatus={selectedTaskDetail?.status}
+            />
+          )}
           {shareButton}
           <GithubStarButton />
           {hasTaskId && <OpenMenu openLinks={openLinks} />}
