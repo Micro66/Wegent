@@ -320,34 +320,83 @@ class SubscriptionNotificationDispatcher:
                 client_secret=client_secret,
             )
 
-            # Format message with subscription name as header (same as webhook)
-            # - title: Shows in contact list preview, use content preview
-            # - text: The actual message content with subscription name as header
-            title_preview = message[:20] + "..." if len(message) > 20 else message
-            # Remove newlines from title preview for cleaner display
-            title_preview = title_preview.replace("\n", " ").strip()
-            text_with_title = f"### {subscription_display_name}\n\n{message}"
+            # Check if AI card template is configured
+            card_template_id = config.get("card_template_id")
 
-            # Send markdown message for better formatting
-            logger.info(
-                f"[_send_dingtalk_notification] Sending message with length: {len(message)}, contains detail_url: {'[查看详情]' in message}"
-            )
-            result = await sender.send_markdown_message(
-                user_ids=[dingtalk_user_id],
-                title=title_preview,
-                text=text_with_title,
-            )
+            if card_template_id:
+                # Use AI card for better visual experience
+                # Note: status field in AI card is designed for streaming scenarios
+                # (e.g., "thinking..."). For completed notifications, we add status
+                # indicator to content instead of using status field.
 
-            if result.get("success"):
+                # Determine status indicator for content prefix
+                status_icon = ""
+                if "失败" in message or "error" in message.lower():
+                    status_icon = "❌ "
+                elif "成功" in message or "completed" in message.lower():
+                    status_icon = "✅ "
+
+                # Add status icon to content for visual indication
+                content_with_status = (
+                    f"{status_icon}{message}" if status_icon else message
+                )
+
                 logger.info(
-                    f"[SubscriptionNotificationDispatcher] Sent DingTalk notification "
-                    f"to user {user_id} (dingtalk_id={dingtalk_user_id})"
+                    f"[_send_dingtalk_notification] Sending AI card notification with "
+                    f"template={card_template_id}"
                 )
+
+                result = await sender.send_ai_card_notification(
+                    user_id=dingtalk_user_id,
+                    title=subscription_display_name,
+                    content=content_with_status,
+                    card_template_id=card_template_id,
+                    status="",  # Empty status to avoid showing processing indicator
+                    enable_streaming=False,  # Notification content is ready, no need for streaming
+                )
+
+                if result.get("success"):
+                    logger.info(
+                        f"[SubscriptionNotificationDispatcher] Sent DingTalk AI card "
+                        f"notification to user {user_id} (dingtalk_id={dingtalk_user_id}, "
+                        f"outTrackId={result.get('outTrackId')})"
+                    )
+                else:
+                    logger.warning(
+                        f"[SubscriptionNotificationDispatcher] Failed to send DingTalk "
+                        f"AI card notification to user {user_id}: {result.get('error')}"
+                    )
             else:
-                logger.warning(
-                    f"[SubscriptionNotificationDispatcher] Failed to send DingTalk "
-                    f"notification to user {user_id}: {result.get('error')}"
+                # Fallback to markdown message (legacy mode)
+                # Format message with subscription name as header (same as webhook)
+                # - title: Shows in contact list preview, use content preview
+                # - text: The actual message content with subscription name as header
+                title_preview = message[:20] + "..." if len(message) > 20 else message
+                # Remove newlines from title preview for cleaner display
+                title_preview = title_preview.replace("\n", " ").strip()
+                text_with_title = f"### {subscription_display_name}\n\n{message}"
+
+                # Send markdown message for better formatting
+                logger.info(
+                    f"[_send_dingtalk_notification] Sending markdown message (AI card template not configured) "
+                    f"with length: {len(message)}, contains detail_url: {'[查看详情]' in message}"
                 )
+                result = await sender.send_markdown_message(
+                    user_ids=[dingtalk_user_id],
+                    title=title_preview,
+                    text=text_with_title,
+                )
+
+                if result.get("success"):
+                    logger.info(
+                        f"[SubscriptionNotificationDispatcher] Sent DingTalk notification "
+                        f"to user {user_id} (dingtalk_id={dingtalk_user_id})"
+                    )
+                else:
+                    logger.warning(
+                        f"[SubscriptionNotificationDispatcher] Failed to send DingTalk "
+                        f"notification to user {user_id}: {result.get('error')}"
+                    )
 
         except Exception as e:
             logger.error(
