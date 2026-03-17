@@ -216,6 +216,7 @@ class DingTalkRobotSender:
         card_template_id: str,
         status: str = "",
         enable_streaming: bool = False,
+        open_space_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Send AI card notification to user.
 
@@ -230,6 +231,7 @@ class DingTalkRobotSender:
             card_template_id: AI card template ID from DingTalk Open Platform
             status: Optional status text (e.g., "执行完成", "执行失败")
             enable_streaming: If True, simulate streaming effect for better UX
+            open_space_id: Optional explicit openSpaceId. Defaults to IM_ROBOT.{user_id}
 
         Returns:
             API response dict with outTrackId for tracking
@@ -240,6 +242,7 @@ class DingTalkRobotSender:
         try:
             access_token = await self._get_access_token()
             out_track_id = str(uuid.uuid4())
+            resolved_open_space_id = open_space_id or f"dtv1.card//IM_ROBOT.{user_id}"
 
             # Build card data
             card_param_map = {
@@ -251,25 +254,44 @@ class DingTalkRobotSender:
 
             # Build request body
             url = f"{self.BASE_URL}/v1.0/card/instances/createAndDeliver"
-            payload = {
+
+            # Determine if this is a group chat or private chat based on open_space_id
+            is_group = resolved_open_space_id and "IM_GROUP" in resolved_open_space_id
+
+            payload: Dict[str, Any] = {
                 "outTrackId": out_track_id,
                 "cardTemplateId": card_template_id,
-                "openSpaceId": f"dtv1.card//IM_ROBOT.{user_id}",
+                "openSpaceId": resolved_open_space_id,
                 "cardData": {
                     "cardParamMap": card_param_map,
                 },
-                "imRobotOpenSpaceModel": {
+            }
+
+            if is_group:
+                payload["imGroupOpenSpaceModel"] = {
                     "supportForward": True,
                     "lastMessageI18n": {"ZH_CN": "您收到一条订阅通知"},
-                },
-                "imRobotOpenDeliverModel": {
+                }
+                payload["imGroupOpenDeliverModel"] = {
+                    "spaceType": "IM_GROUP",
+                    "robotCode": self.client_id,
+                }
+            else:
+                payload["imRobotOpenSpaceModel"] = {
+                    "supportForward": True,
+                    "lastMessageI18n": {"ZH_CN": "您收到一条订阅通知"},
+                }
+                payload["imRobotOpenDeliverModel"] = {
                     "spaceType": "IM_ROBOT",
-                },
-            }
+                }
 
             logger.info(
                 f"[DingTalkSender] Creating AI card for user {user_id}, "
-                f"template={card_template_id}, streaming={enable_streaming}"
+                f"template={card_template_id}, streaming={enable_streaming}, "
+                f"is_group={is_group}, open_space_id={resolved_open_space_id}"
+            )
+            logger.debug(
+                f"[DingTalkSender] Request payload: {json.dumps(payload, ensure_ascii=False)}"
             )
 
             async with httpx.AsyncClient(timeout=30.0) as client:
@@ -283,18 +305,21 @@ class DingTalkRobotSender:
                 )
                 response.raise_for_status()
                 data = response.json()
+                logger.info(
+                    f"[DingTalkSender] API response: {json.dumps(data, ensure_ascii=False)}"
+                )
 
                 # Check for API error
                 if "code" in data and data.get("code") != "0":
                     error_msg = data.get("message", "Unknown error")
                     logger.error(
-                        f"[DingTalkSender] AI card creation failed: {error_msg}"
+                        f"[DingTalkSender] AI card creation failed: {error_msg}, response={data}"
                     )
                     return {"success": False, "error": error_msg}
 
                 logger.info(
                     f"[DingTalkSender] AI card created successfully, "
-                    f"outTrackId={out_track_id}"
+                    f"outTrackId={out_track_id}, is_group={is_group}"
                 )
 
                 # If streaming enabled, simulate typing effect
@@ -304,6 +329,7 @@ class DingTalkRobotSender:
                         user_id=user_id,
                         card_template_id=card_template_id,
                         final_content=content,
+                        open_space_id=resolved_open_space_id,
                     )
                 else:
                     # For non-streaming, explicitly mark card as finished
@@ -313,6 +339,7 @@ class DingTalkRobotSender:
                         user_id=user_id,
                         card_template_id=card_template_id,
                         content=content,
+                        open_space_id=resolved_open_space_id,
                     )
 
                 return {
@@ -355,6 +382,7 @@ class DingTalkRobotSender:
         final_content: str,
         chunk_size: int = 20,
         delay: float = 0.1,
+        open_space_id: Optional[str] = None,
     ) -> None:
         """Simulate streaming effect for AI card.
 
@@ -373,6 +401,7 @@ class DingTalkRobotSender:
 
         try:
             access_token = await self._get_access_token()
+            resolved_open_space_id = open_space_id or f"dtv1.card//IM_ROBOT.{user_id}"
             url = f"{self.BASE_URL}/v1.0/card/streaming"
 
             # Build up content gradually
@@ -383,7 +412,7 @@ class DingTalkRobotSender:
                 payload = {
                     "outTrackId": out_track_id,
                     "cardTemplateId": card_template_id,
-                    "openSpaceId": f"dtv1.card//IM_ROBOT.{user_id}",
+                    "openSpaceId": resolved_open_space_id,
                     "key": "content",
                     "content": current_content,
                     "isFull": True,
@@ -407,7 +436,7 @@ class DingTalkRobotSender:
             payload = {
                 "outTrackId": out_track_id,
                 "cardTemplateId": card_template_id,
-                "openSpaceId": f"dtv1.card//IM_ROBOT.{user_id}",
+                "openSpaceId": resolved_open_space_id,
                 "key": "content",
                 "content": final_content,
                 "isFull": True,
@@ -439,6 +468,7 @@ class DingTalkRobotSender:
         user_id: str,
         card_template_id: str,
         content: str,
+        open_space_id: Optional[str] = None,
     ) -> None:
         """Mark AI card as finished to clear processing indicator.
 
@@ -453,6 +483,7 @@ class DingTalkRobotSender:
             content: Final card content
         """
         try:
+            resolved_open_space_id = open_space_id or f"dtv1.card//IM_ROBOT.{user_id}"
             access_token = await self._get_access_token()
             url = f"{self.BASE_URL}/v1.0/card/streaming"
 
@@ -461,7 +492,7 @@ class DingTalkRobotSender:
             payload = {
                 "outTrackId": out_track_id,
                 "cardTemplateId": card_template_id,
-                "openSpaceId": f"dtv1.card//IM_ROBOT.{user_id}",
+                "openSpaceId": resolved_open_space_id,
                 "key": "content",
                 "content": content,
                 "isFull": True,

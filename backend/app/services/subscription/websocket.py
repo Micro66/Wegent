@@ -11,7 +11,7 @@ via Socket.IO when execution status changes.
 
 import json
 import logging
-from typing import Optional
+from typing import Any, Dict, Optional
 
 from sqlalchemy.orm import Session
 
@@ -146,5 +146,33 @@ def emit_background_execution_update(
     except Exception as e:
         logger.error(
             f"[WS] Failed to publish background:execution_update to Redis: {e}",
+            exc_info=True,
+        )
+
+
+def emit_subscription_binding_update(
+    *,
+    user_id: int,
+    payload: Dict[str, Any],
+) -> None:
+    """Emit subscription:group_binding_updated event to a user room."""
+    try:
+        import redis
+
+        from app.core.config import settings
+
+        redis_client = redis.from_url(settings.REDIS_URL, decode_responses=False)
+        socketio_message = {
+            "method": "emit",
+            "event": "subscription:group_binding_updated",
+            "data": [payload],
+            "namespace": "/chat",
+            "room": f"user:{user_id}",
+        }
+        redis_client.publish("socketio", json.dumps(socketio_message))
+        redis_client.close()
+    except Exception as e:
+        logger.error(
+            f"[WS] Failed to publish subscription:group_binding_updated: {e}",
             exc_info=True,
         )

@@ -887,6 +887,22 @@ class NotificationChannelInfo(BaseModel):
     is_bound: bool = Field(False, description="Whether user has bound to this channel")
 
 
+class NotificationChannelBindingConfig(BaseModel):
+    """Developer binding preferences for a notification channel."""
+
+    channel_id: int = Field(..., description="Messager channel ID")
+    bind_private: bool = Field(
+        True, description="Whether notifications should be delivered to private chat"
+    )
+    bind_group: bool = Field(
+        False,
+        description="Whether notifications should be delivered to bound group chat",
+    )
+    group_conversation_id: Optional[str] = Field(
+        None, description="Bound group conversation ID for group delivery"
+    )
+
+
 class FollowSettingsResponse(BaseModel):
     """Response for follow notification settings."""
 
@@ -917,6 +933,10 @@ class DeveloperNotificationSettingsResponse(BaseModel):
         default_factory=list,
         description="List of available Messager channels with binding status",
     )
+    channel_binding_configs: List[NotificationChannelBindingConfig] = Field(
+        default_factory=list,
+        description="Per-channel binding preferences for private/group delivery",
+    )
 
 
 class DeveloperNotificationSettingsUpdateRequest(BaseModel):
@@ -925,6 +945,42 @@ class DeveloperNotificationSettingsUpdateRequest(BaseModel):
     notification_level: NotificationLevel = Field(..., description="Notification level")
     notification_channel_ids: Optional[List[int]] = Field(
         default=None, description="List of Messager channel IDs for notifications"
+    )
+    channel_binding_configs: Optional[List[NotificationChannelBindingConfig]] = Field(
+        default=None,
+        description="Per-channel binding preferences for private/group delivery",
+    )
+
+
+class DeveloperBindingSessionStartRequest(BaseModel):
+    """Request to start a developer notification binding session."""
+
+    channel_id: int = Field(..., description="Messager channel ID")
+    bind_private: bool = Field(
+        True, description="Whether private binding should be completed"
+    )
+    bind_group: bool = Field(
+        False, description="Whether group binding should be completed"
+    )
+
+
+class DeveloperBindingSessionCancelRequest(BaseModel):
+    """Request to cancel a developer notification binding session."""
+
+    channel_id: int = Field(..., description="Messager channel ID")
+
+
+class DeveloperBindingSessionResponse(BaseModel):
+    """Response for developer notification binding session status."""
+
+    status: str = Field(..., description="waiting/cancelled")
+    subscription_id: int = Field(..., description="Subscription ID")
+    channel_id: int = Field(..., description="Messager channel ID")
+    bind_private: Optional[bool] = Field(
+        None, description="Whether private binding is required"
+    )
+    bind_group: Optional[bool] = Field(
+        None, description="Whether group binding is required"
     )
 
 

@@ -33,6 +33,9 @@ import type {
   UpdateFollowSettingsRequest,
   DeveloperNotificationSettingsResponse,
   DeveloperNotificationSettingsUpdateRequest,
+  DeveloperBindingSessionStartRequest,
+  DeveloperBindingSessionCancelRequest,
+  DeveloperBindingSessionResponse,
 } from '@/types/subscription'
 import type { PaginationParams } from '@/types/api'
 
@@ -210,6 +213,26 @@ export const subscriptionApis = {
       `/subscriptions/${subscriptionId}/developer/notification-settings`,
       request
     )
+  },
+
+  /**
+   * Start developer binding session for DingTalk private/group binding.
+   */
+  async startDeveloperBindingSession(
+    subscriptionId: number,
+    request: DeveloperBindingSessionStartRequest
+  ): Promise<DeveloperBindingSessionResponse> {
+    return apiClient.post(`/subscriptions/${subscriptionId}/developer/binding/start`, request)
+  },
+
+  /**
+   * Cancel developer binding session.
+   */
+  async cancelDeveloperBindingSession(
+    subscriptionId: number,
+    request: DeveloperBindingSessionCancelRequest
+  ): Promise<DeveloperBindingSessionResponse> {
+    return apiClient.post(`/subscriptions/${subscriptionId}/developer/binding/cancel`, request)
   },
 
   /**

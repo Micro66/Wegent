@@ -175,6 +175,16 @@ class SubscriptionNotificationDispatcher:
         user_bindings = subscription_notification_service.get_user_im_bindings(
             db, user_id=user_id
         )
+        subscription = (
+            db.query(Kind)
+            .filter(
+                Kind.id == subscription_id,
+                Kind.kind == "Subscription",
+                Kind.is_active == True,
+            )
+            .first()
+        )
+        subscription_owner_id = subscription.user_id if subscription else None
 
         # Format the notification message based on status
         formatted_message = self._format_notification_message(
@@ -224,6 +234,20 @@ class SubscriptionNotificationDispatcher:
 
             # Dispatch based on channel type
             if channel_type == "dingtalk":
+                binding_config = (
+                    subscription_notification_service.get_subscription_channel_binding_config(
+                        db, subscription_id=subscription_id, channel_id=channel_id
+                    )
+                    if subscription_owner_id == user_id
+                    else None
+                )
+                send_private = True
+                send_group = False
+                group_conversation_id = None
+                if binding_config:
+                    send_private = bool(binding_config.get("bind_private", True))
+                    send_group = bool(binding_config.get("bind_group", False))
+                    group_conversation_id = binding_config.get("group_conversation_id")
                 tasks.append(
                     self._send_dingtalk_notification(
                         db=db,
@@ -234,6 +258,9 @@ class SubscriptionNotificationDispatcher:
                         subscription_id=subscription_id,
                         execution_id=execution_id,
                         subscription_display_name=subscription_display_name,
+                        send_private=send_private,
+                        send_group=send_group,
+                        group_conversation_id=group_conversation_id,
                     )
                 )
             elif channel_type == "telegram":
@@ -269,6 +296,9 @@ class SubscriptionNotificationDispatcher:
         subscription_id: int,
         execution_id: int,
         subscription_display_name: str,
+        send_private: bool = True,
+        send_group: bool = False,
+        group_conversation_id: Optional[str] = None,
     ) -> None:
         """
         Send notification via DingTalk.
@@ -284,10 +314,8 @@ class SubscriptionNotificationDispatcher:
             subscription_display_name: Display name of the subscription
         """
         try:
-            # Get DingTalk user ID from binding
-            # For oToMessages/batchSend API, we need staffId (sender_staff_id), not sender_id
             dingtalk_user_id = binding.sender_staff_id or binding.sender_id
-            if not dingtalk_user_id:
+            if send_private and not dingtalk_user_id:
                 logger.warning(
                     f"[SubscriptionNotificationDispatcher] User {user_id} has no "
                     f"sender_staff_id or sender_id for DingTalk channel {channel.id}"
@@ -346,26 +374,56 @@ class SubscriptionNotificationDispatcher:
                     f"template={card_template_id}"
                 )
 
-                result = await sender.send_ai_card_notification(
-                    user_id=dingtalk_user_id,
-                    title=subscription_display_name,
-                    content=content_with_status,
-                    card_template_id=card_template_id,
-                    status="",  # Empty status to avoid showing processing indicator
-                    enable_streaming=False,  # Notification content is ready, no need for streaming
-                )
+                if send_private:
+                    result = await sender.send_ai_card_notification(
+                        user_id=dingtalk_user_id,
+                        title=subscription_display_name,
+                        content=content_with_status,
+                        card_template_id=card_template_id,
+                        status="",
+                        enable_streaming=False,
+                    )
+                    if result.get("success"):
+                        logger.info(
+                            f"[SubscriptionNotificationDispatcher] Sent DingTalk AI card "
+                            f"notification to user {user_id} (dingtalk_id={dingtalk_user_id}, "
+                            f"outTrackId={result.get('outTrackId')})"
+                        )
+                    else:
+                        logger.warning(
+                            f"[SubscriptionNotificationDispatcher] Failed to send DingTalk "
+                            f"AI card notification to user {user_id}: {result.get('error')}"
+                        )
 
-                if result.get("success"):
+                if send_group and group_conversation_id:
+                    group_open_space_id = f"dtv1.card//IM_GROUP.{group_conversation_id}"
                     logger.info(
-                        f"[SubscriptionNotificationDispatcher] Sent DingTalk AI card "
-                        f"notification to user {user_id} (dingtalk_id={dingtalk_user_id}, "
-                        f"outTrackId={result.get('outTrackId')})"
+                        f"[_send_dingtalk_notification] Sending group AI card to "
+                        f"group_conversation_id={group_conversation_id}, open_space_id={group_open_space_id}"
                     )
-                else:
-                    logger.warning(
-                        f"[SubscriptionNotificationDispatcher] Failed to send DingTalk "
-                        f"AI card notification to user {user_id}: {result.get('error')}"
+                    group_result = await sender.send_ai_card_notification(
+                        user_id=dingtalk_user_id or "group",
+                        title=subscription_display_name,
+                        content=content_with_status,
+                        card_template_id=card_template_id,
+                        status="",
+                        enable_streaming=False,
+                        open_space_id=group_open_space_id,
                     )
+                    logger.info(
+                        f"[_send_dingtalk_notification] Group AI card result: {group_result}"
+                    )
+                    if group_result.get("success"):
+                        logger.info(
+                            f"[SubscriptionNotificationDispatcher] Sent DingTalk group AI card "
+                            f"conversation_id={group_conversation_id}"
+                        )
+                    else:
+                        logger.warning(
+                            f"[SubscriptionNotificationDispatcher] Failed to send DingTalk "
+                            f"group AI card conversation_id={group_conversation_id}: "
+                            f"{group_result.get('error')}"
+                        )
             else:
                 # Fallback to markdown message (legacy mode)
                 # Format message with subscription name as header (same as webhook)
@@ -381,21 +439,28 @@ class SubscriptionNotificationDispatcher:
                     f"[_send_dingtalk_notification] Sending markdown message (AI card template not configured) "
                     f"with length: {len(message)}, contains detail_url: {'[查看详情]' in message}"
                 )
-                result = await sender.send_markdown_message(
-                    user_ids=[dingtalk_user_id],
-                    title=title_preview,
-                    text=text_with_title,
-                )
-
-                if result.get("success"):
-                    logger.info(
-                        f"[SubscriptionNotificationDispatcher] Sent DingTalk notification "
-                        f"to user {user_id} (dingtalk_id={dingtalk_user_id})"
+                if send_private:
+                    result = await sender.send_markdown_message(
+                        user_ids=[dingtalk_user_id],
+                        title=title_preview,
+                        text=text_with_title,
                     )
-                else:
-                    logger.warning(
-                        f"[SubscriptionNotificationDispatcher] Failed to send DingTalk "
-                        f"notification to user {user_id}: {result.get('error')}"
+
+                    if result.get("success"):
+                        logger.info(
+                            f"[SubscriptionNotificationDispatcher] Sent DingTalk notification "
+                            f"to user {user_id} (dingtalk_id={dingtalk_user_id})"
+                        )
+                    else:
+                        logger.warning(
+                            f"[SubscriptionNotificationDispatcher] Failed to send DingTalk "
+                            f"notification to user {user_id}: {result.get('error')}"
+                        )
+
+                if send_group and group_conversation_id:
+                    logger.info(
+                        "[SubscriptionNotificationDispatcher] Group delivery skipped because "
+                        "AI card template is not configured"
                     )
 
         except Exception as e:
