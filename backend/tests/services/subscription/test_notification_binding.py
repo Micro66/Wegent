@@ -85,7 +85,8 @@ def test_start_and_cancel_binding_session(test_db, test_user, mocker):
     assert started["bind_private"] is True
     assert started["bind_group"] is True
 
-    pending_key = f"subscription:binding:pending:{test_user.id}:1001:123"
+    # New Redis key format without subscription_id
+    pending_key = f"subscription:binding:pending:{test_user.id}:123"
     assert fake_redis.get(pending_key) is not None
 
     cancelled = subscription_notification_service.cancel_developer_binding_session(
@@ -98,29 +99,22 @@ def test_start_and_cancel_binding_session(test_db, test_user, mocker):
     assert fake_redis.get(pending_key) is None
 
 
-def test_group_message_completes_group_binding_and_overrides_old_group(
-    test_db, test_user, mocker
-):
+def test_group_message_emits_group_info_event(test_db, test_user, mocker):
+    """Test that group binding emits WebSocket event instead of auto-updating subscription."""
     fake_redis = _FakeRedis()
     mocker.patch(
         "app.services.subscription.notification_service.redis.from_url",
         return_value=fake_redis,
     )
-    emit_mock = mocker.patch(
+    emit_binding_mock = mocker.patch(
         "app.services.subscription.notification_service.emit_subscription_binding_update"
     )
-
-    subscription = _create_subscription_kind(
-        test_db, owner_user_id=test_user.id, subscription_id=1002
+    emit_group_info_mock = mocker.patch(
+        "app.services.subscription.notification_service.emit_subscription_group_info"
     )
-    subscription.json["_internal"]["notification_channel_bindings"] = {
-        "123": {
-            "bind_private": True,
-            "bind_group": True,
-            "group_conversation_id": "old-group-id",
-        }
-    }
-    test_db.commit()
+
+    # Create subscription without pre-existing binding config
+    _create_subscription_kind(test_db, owner_user_id=test_user.id, subscription_id=1002)
 
     subscription_notification_service.start_developer_binding_session(
         test_db,
@@ -139,6 +133,7 @@ def test_group_message_completes_group_binding_and_overrides_old_group(
         conversation_id="new-group-id",
         sender_id="ding-user-1",
         sender_staff_id="staff-1",
+        group_name="Test Group",
     )
 
     assert result["matched"] is True
@@ -146,11 +141,14 @@ def test_group_message_completes_group_binding_and_overrides_old_group(
     assert result["group_bound"] is True
     assert result["private_bound"] is False
 
-    test_db.refresh(subscription)
-    binding_cfg = subscription.json["_internal"]["notification_channel_bindings"]["123"]
-    assert binding_cfg["group_conversation_id"] == "new-group-id"
-
-    emit_mock.assert_called_once()
+    # WebSocket events should be emitted
+    emit_binding_mock.assert_called_once()
+    emit_group_info_mock.assert_called_once_with(
+        user_id=test_user.id,
+        channel_id=123,
+        group_name="Test Group",
+        group_conversation_id="new-group-id",
+    )
 
 
 def test_group_message_can_also_complete_private_binding(test_db, test_user, mocker):

@@ -38,7 +38,10 @@ from app.schemas.subscription import NotificationLevel as SchemaNotificationLeve
 from app.schemas.subscription import (
     SubscriptionFollowConfig,
 )
-from app.services.subscription.websocket import emit_subscription_binding_update
+from app.services.subscription.websocket import (
+    emit_subscription_binding_update,
+    emit_subscription_group_info,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -667,12 +670,14 @@ class SubscriptionNotificationService:
         return result
 
     def _get_binding_pending_key(
-        self, *, user_id: int, subscription_id: int, channel_id: int
+        self, *, user_id: int, channel_id: int, subscription_id: Optional[int] = None
     ) -> str:
-        return f"{BINDING_PENDING_PREFIX}{user_id}:{subscription_id}:{channel_id}"
+        if subscription_id is not None:
+            return f"{BINDING_PENDING_PREFIX}{user_id}:{subscription_id}:{channel_id}"
+        return f"{BINDING_PENDING_PREFIX}{user_id}:{channel_id}"
 
-    def _get_binding_pending_index_key(self, *, user_id: int, channel_id: int) -> str:
-        return f"{BINDING_PENDING_INDEX_PREFIX}{user_id}:{channel_id}"
+    def _get_binding_pending_index_key(self, *, user_id: int) -> str:
+        return f"{BINDING_PENDING_INDEX_PREFIX}{user_id}"
 
     def _get_redis_client(self):
         return redis.from_url(settings.REDIS_URL, decode_responses=True)
@@ -691,6 +696,7 @@ class SubscriptionNotificationService:
                     "bind_private": bool(cfg.get("bind_private", True)),
                     "bind_group": bool(cfg.get("bind_group", False)),
                     "group_conversation_id": cfg.get("group_conversation_id"),
+                    "group_name": cfg.get("group_name"),
                 }
             )
         return result
@@ -748,6 +754,7 @@ class SubscriptionNotificationService:
         bind_private: Optional[bool] = None,
         bind_group: Optional[bool] = None,
         group_conversation_id: Optional[str] = None,
+        group_name: Optional[str] = None,
     ) -> Dict[str, Any]:
         json_data = deepcopy(subscription.json or {})
         internal = json_data.get("_internal", {})
@@ -770,6 +777,9 @@ class SubscriptionNotificationService:
                 if group_conversation_id is not None
                 else existing.get("group_conversation_id")
             ),
+            "group_name": (
+                group_name if group_name is not None else existing.get("group_name")
+            ),
             "updated_at": datetime.now(timezone.utc).isoformat(),
         }
         binding_map[str(channel_id)] = updated
@@ -780,13 +790,14 @@ class SubscriptionNotificationService:
         db.commit()
         db.refresh(subscription)
         logger.info(
-            "[SubscriptionNotification] Upserted channel binding: subscription_id=%s, user_id=%s, channel_id=%s, bind_private=%s, bind_group=%s, group_conversation_id=%s",
+            "[SubscriptionNotification] Upserted channel binding: subscription_id=%s, user_id=%s, channel_id=%s, bind_private=%s, bind_group=%s, group_conversation_id=%s, group_name=%s",
             subscription.id,
             subscription.user_id,
             channel_id,
             updated["bind_private"],
             updated["bind_group"],
             updated["group_conversation_id"],
+            updated["group_name"],
         )
         return updated
 
@@ -794,28 +805,22 @@ class SubscriptionNotificationService:
         self,
         db: Session,
         *,
-        subscription_id: int,
         user_id: int,
         channel_id: int,
         bind_private: bool,
         bind_group: bool,
+        subscription_id: Optional[int] = None,
     ) -> Dict[str, Any]:
         if not bind_private and not bind_group:
             raise ValueError("At least one binding target is required")
 
-        subscription = self._get_subscription_for_owner(
-            db, subscription_id=subscription_id, user_id=user_id
-        )
-        self._upsert_subscription_channel_binding(
-            db,
-            subscription=subscription,
-            channel_id=channel_id,
-            bind_private=bind_private,
-            bind_group=bind_group,
-        )
+        # Subscription ownership check is optional (only when subscription_id is provided)
+        if subscription_id is not None:
+            self._get_subscription_for_owner(
+                db, subscription_id=subscription_id, user_id=user_id
+            )
 
-        payload = {
-            "subscription_id": subscription_id,
+        payload: Dict[str, Any] = {
             "user_id": user_id,
             "channel_id": channel_id,
             "bind_private": bind_private,
@@ -824,51 +829,52 @@ class SubscriptionNotificationService:
             "group_bound": False,
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
-        key = self._get_binding_pending_key(
-            user_id=user_id, subscription_id=subscription_id, channel_id=channel_id
-        )
-        index_key = self._get_binding_pending_index_key(
-            user_id=user_id, channel_id=channel_id
-        )
+        # Include subscription_id in payload if provided
+        if subscription_id is not None:
+            payload["subscription_id"] = subscription_id
+
+        key = self._get_binding_pending_key(user_id=user_id, channel_id=channel_id)
+        index_key = self._get_binding_pending_index_key(user_id=user_id)
         redis_client = self._get_redis_client()
         try:
             redis_client.setex(key, BINDING_PENDING_TTL_SECONDS, json.dumps(payload))
             redis_client.setex(index_key, BINDING_PENDING_TTL_SECONDS, key)
             logger.info(
-                "[SubscriptionNotification] Started binding session: key=%s, index_key=%s, ttl=%ss, bind_private=%s, bind_group=%s",
+                "[SubscriptionNotification] Started binding session: key=%s, index_key=%s, ttl=%ss, bind_private=%s, bind_group=%s, subscription_id=%s",
                 key,
                 index_key,
                 BINDING_PENDING_TTL_SECONDS,
                 bind_private,
                 bind_group,
+                subscription_id,
             )
         finally:
             redis_client.close()
-        return {
+        result: Dict[str, Any] = {
             "status": "waiting",
-            "subscription_id": subscription_id,
             "channel_id": channel_id,
             "bind_private": bind_private,
             "bind_group": bind_group,
         }
+        if subscription_id is not None:
+            result["subscription_id"] = subscription_id
+        return result
 
     def cancel_developer_binding_session(
         self,
         db: Session,
         *,
-        subscription_id: int,
         user_id: int,
         channel_id: int,
+        subscription_id: Optional[int] = None,
     ) -> Dict[str, Any]:
-        self._get_subscription_for_owner(
-            db, subscription_id=subscription_id, user_id=user_id
-        )
-        key = self._get_binding_pending_key(
-            user_id=user_id, subscription_id=subscription_id, channel_id=channel_id
-        )
-        index_key = self._get_binding_pending_index_key(
-            user_id=user_id, channel_id=channel_id
-        )
+        # Subscription ownership check is optional (only when subscription_id is provided)
+        if subscription_id is not None:
+            self._get_subscription_for_owner(
+                db, subscription_id=subscription_id, user_id=user_id
+            )
+        key = self._get_binding_pending_key(user_id=user_id, channel_id=channel_id)
+        index_key = self._get_binding_pending_index_key(user_id=user_id)
         redis_client = self._get_redis_client()
         try:
             deleted = redis_client.delete(key)
@@ -876,18 +882,21 @@ class SubscriptionNotificationService:
             if index_value == key:
                 redis_client.delete(index_key)
             logger.info(
-                "[SubscriptionNotification] Cancelled binding session: key=%s, index_key=%s, deleted=%s",
+                "[SubscriptionNotification] Cancelled binding session: key=%s, index_key=%s, deleted=%s, subscription_id=%s",
                 key,
                 index_key,
                 deleted,
+                subscription_id,
             )
         finally:
             redis_client.close()
-        return {
+        result: Dict[str, Any] = {
             "status": "cancelled",
-            "subscription_id": subscription_id,
             "channel_id": channel_id,
         }
+        if subscription_id is not None:
+            result["subscription_id"] = subscription_id
+        return result
 
     def handle_dingtalk_binding_from_message(
         self,
@@ -899,10 +908,9 @@ class SubscriptionNotificationService:
         conversation_id: str,
         sender_id: str,
         sender_staff_id: Optional[str],
+        group_name: Optional[str] = None,
     ) -> Dict[str, Any]:
-        index_key = self._get_binding_pending_index_key(
-            user_id=user_id, channel_id=channel_id
-        )
+        index_key = self._get_binding_pending_index_key(user_id=user_id)
         redis_client = self._get_redis_client()
         try:
             logger.info(
@@ -971,21 +979,26 @@ class SubscriptionNotificationService:
                 and conversation_type == "group"
                 and conversation_id
             ):
-                subscription_id = int(pending["subscription_id"])
+                # Use provided group name or default placeholder
+                resolved_group_name = group_name or "Group Chat"
                 logger.info(
-                    "[SubscriptionNotification] Completing group binding from message: subscription_id=%s, channel_id=%s, conversation_id=%s",
-                    subscription_id,
+                    "[SubscriptionNotification] Group binding detected from message: channel_id=%s, conversation_id=%s, group_name=%s",
                     channel_id,
                     conversation_id,
+                    resolved_group_name,
                 )
-                subscription = self._get_subscription_for_owner(
-                    db, subscription_id=subscription_id, user_id=user_id
-                )
-                self._upsert_subscription_channel_binding(
-                    db,
-                    subscription=subscription,
+                # Emit WebSocket event with group info instead of auto-updating subscription
+                emit_subscription_group_info(
+                    user_id=user_id,
                     channel_id=channel_id,
+                    group_name=resolved_group_name,
                     group_conversation_id=conversation_id,
+                )
+                logger.info(
+                    "[SubscriptionNotification] Emitted group info event: user_id=%s, channel_id=%s, group_conversation_id=%s",
+                    user_id,
+                    channel_id,
+                    conversation_id,
                 )
                 group_bound = True
                 changed = True
@@ -1028,8 +1041,7 @@ class SubscriptionNotificationService:
                     group_bound,
                 )
 
-            payload = {
-                "subscription_id": int(pending["subscription_id"]),
+            payload: Dict[str, Any] = {
                 "channel_id": channel_id,
                 "conversation_id": conversation_id if group_bound else None,
                 "private_bound": private_bound,
@@ -1037,6 +1049,10 @@ class SubscriptionNotificationService:
                 "completed": completed,
                 "status": "success" if completed else "partial",
             }
+            # Include subscription_id in payload if it exists
+            pending_subscription_id = pending.get("subscription_id")
+            if pending_subscription_id is not None:
+                payload["subscription_id"] = int(pending_subscription_id)
             emit_subscription_binding_update(user_id=user_id, payload=payload)
             logger.info(
                 "[SubscriptionNotification] Emitted binding update event: user_id=%s, payload=%s",
