@@ -12,7 +12,7 @@ import logging
 from typing import List, Optional
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import RedirectResponse, Response
 from sqlalchemy.orm import Session
 
@@ -400,6 +400,7 @@ async def get_attachment_preview(
 @router.get("/{attachment_id}/download")
 async def download_attachment(
     attachment_id: int,
+    request: Request,
     share_token: Optional[str] = Query(
         None, description="Share token for public access"
     ),
@@ -409,14 +410,16 @@ async def download_attachment(
     """
     Download the original file.
 
-    Supports two authentication methods:
+    Supports three authentication methods:
     1. JWT token (for logged-in users)
     2. Share token (for public shared task viewers)
+    3. Browser redirect (no auth) -> Login page -> Auto download after login
 
     Returns:
         File binary data with appropriate content type
     """
     has_access = False
+    context = None
 
     # Method 1: Share token authentication (no login required)
     if share_token:
@@ -429,13 +432,28 @@ async def download_attachment(
             )
             if context is None:
                 raise HTTPException(status_code=404, detail="Attachment not found")
+
     # Method 2: JWT token authentication (existing logic)
     elif current_user:
         context = _get_attachment_context(db, attachment_id, current_user)
         has_access = True
+
+    # Method 3: No authentication - redirect to login for browser access
     else:
-        # No authentication provided
-        raise HTTPException(status_code=401, detail="Authentication required")
+        # Check if it's a browser request (accepts HTML)
+        accept_header = request.headers.get("Accept", "")
+        is_browser = "text/html" in accept_header
+
+        if is_browser:
+            # Browser access - redirect to frontend login page
+            from app.core.config import settings
+
+            current_url = str(request.url)
+            login_url = f"{settings.FRONTEND_URL}/login?redirect={quote(current_url)}"
+            return RedirectResponse(url=login_url, status_code=302)
+        else:
+            # API/fetch call - return 401
+            raise HTTPException(status_code=401, detail="Authentication required")
 
     if not has_access:
         raise HTTPException(status_code=404, detail="Attachment not found")

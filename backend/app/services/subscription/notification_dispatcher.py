@@ -16,6 +16,7 @@ import asyncio
 import hashlib
 import hmac
 import logging
+import re
 import time
 from typing import Any, Dict, List, Optional
 
@@ -37,6 +38,17 @@ logger = logging.getLogger(__name__)
 
 # Messager CRD kind
 MESSAGER_KIND = "Messager"
+
+# Attachment URL pattern for link conversion
+ATTACHMENT_URL_PATTERN = r"/api/attachments/(\d+)/download"
+
+
+def _convert_to_frontend_attachment_url(attachment_id: str | int) -> str:
+    """Convert attachment ID to frontend download URL."""
+    from app.core.config import settings
+
+    base_url = settings.FRONTEND_URL.rstrip("/")
+    return f"{base_url}/download/attachment/{attachment_id}"
 
 
 class SubscriptionNotificationDispatcher:
@@ -193,6 +205,8 @@ class SubscriptionNotificationDispatcher:
             result_summary=result_summary,
             detail_url=detail_url,
         )
+        # Convert attachment links to absolute URLs for external IM channels
+        formatted_message = self._convert_attachment_links(formatted_message)
         logger.info(
             f"[_send_messager_notifications] Formatted message with detail_url: {detail_url}, status: {status}"
         )
@@ -756,6 +770,8 @@ class SubscriptionNotificationDispatcher:
             result_summary=result_summary,
             detail_url=detail_url,
         )
+        # Convert attachment links to absolute URLs for external webhooks
+        formatted_message = self._convert_attachment_links(formatted_message)
 
         try:
             if webhook.type == NotificationWebhookType.DINGTALK:
@@ -1023,6 +1039,33 @@ class SubscriptionNotificationDispatcher:
                 f"for subscription {subscription_display_name} to {url}"
             )
             return {"success": True}
+
+    def _convert_attachment_links(self, message: str) -> str:
+        """
+        Convert attachment download URLs to frontend download URLs.
+
+        This is necessary for external IM channels (DingTalk, etc.) to ensure
+        all downloads go through the frontend (for auth check and better UX).
+
+        Converts:
+            /api/attachments/123/download
+        To:
+            https://wegent.com/download/attachment/123
+
+        Args:
+            message: Original message that may contain attachment links
+
+        Returns:
+            Message with converted frontend download URLs
+        """
+
+        # Replace attachment URLs with frontend download URLs
+        def replace_url(match: re.Match) -> str:
+            attachment_id = match.group(1)
+            return _convert_to_frontend_attachment_url(attachment_id)
+
+        converted = re.sub(ATTACHMENT_URL_PATTERN, replace_url, message)
+        return converted
 
 
 # Singleton instance
