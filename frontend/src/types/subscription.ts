@@ -497,6 +497,7 @@ export interface NotificationChannelBindingConfig {
   bind_private: boolean
   bind_group: boolean
   group_conversation_id?: string
+  group_name?: string
 }
 
 export interface DeveloperBindingSessionStartRequest {
@@ -511,8 +512,17 @@ export interface DeveloperBindingSessionCancelRequest {
 
 export interface DeveloperBindingSessionResponse {
   status: 'waiting' | 'cancelled'
-  subscription_id: number
+  subscription_id?: number
   channel_id: number
   bind_private?: boolean
   bind_group?: boolean
+}
+
+/**
+ * WebSocket payload for subscription group info notification
+ */
+export interface SubscriptionGroupInfoPayload {
+  channel_id: number
+  group_name: string
+  group_conversation_id: string
 }

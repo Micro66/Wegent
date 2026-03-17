@@ -217,22 +217,30 @@ export const subscriptionApis = {
 
   /**
    * Start developer binding session for DingTalk private/group binding.
+   * Supports both new subscriptions (no ID) and existing subscriptions (with ID).
    */
   async startDeveloperBindingSession(
-    subscriptionId: number,
+    subscriptionId: number | null,
     request: DeveloperBindingSessionStartRequest
   ): Promise<DeveloperBindingSessionResponse> {
-    return apiClient.post(`/subscriptions/${subscriptionId}/developer/binding/start`, request)
+    if (subscriptionId) {
+      return apiClient.post(`/subscriptions/${subscriptionId}/developer/binding/start`, request)
+    }
+    return apiClient.post('/developer/binding/start', request)
   },
 
   /**
    * Cancel developer binding session.
+   * Supports both new subscriptions (no ID) and existing subscriptions (with ID).
    */
   async cancelDeveloperBindingSession(
-    subscriptionId: number,
+    subscriptionId: number | null,
     request: DeveloperBindingSessionCancelRequest
   ): Promise<DeveloperBindingSessionResponse> {
-    return apiClient.post(`/subscriptions/${subscriptionId}/developer/binding/cancel`, request)
+    if (subscriptionId) {
+      return apiClient.post(`/subscriptions/${subscriptionId}/developer/binding/cancel`, request)
+    }
+    return apiClient.post('/developer/binding/cancel', request)
   },
 
   /**
