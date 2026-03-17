@@ -51,6 +51,28 @@ def _convert_to_frontend_attachment_url(attachment_id: str | int) -> str:
     return f"{base_url}/download/attachment/{attachment_id}"
 
 
+def _convert_attachment_links_to_frontend(message: str) -> str:
+    """
+    Convert attachment download URLs to frontend download URLs.
+
+    Simple conversion without generating public share tokens.
+    Used for webhooks where public sharing is not needed.
+
+    Args:
+        message: Original message that may contain attachment links
+
+    Returns:
+        Message with converted frontend download URLs
+    """
+
+    def replace_url(match: re.Match) -> str:
+        attachment_id = match.group(1)
+        return _convert_to_frontend_attachment_url(attachment_id)
+
+    converted = re.sub(ATTACHMENT_URL_PATTERN, replace_url, message)
+    return converted
+
+
 class SubscriptionNotificationDispatcher:
     """Dispatcher for sending subscription execution notifications to followers."""
 
@@ -205,8 +227,11 @@ class SubscriptionNotificationDispatcher:
             result_summary=result_summary,
             detail_url=detail_url,
         )
-        # Convert attachment links to absolute URLs for external IM channels
-        formatted_message = self._convert_attachment_links(formatted_message)
+        # Convert attachment links to public share URLs for external IM channels
+        # This allows any logged-in user to download, not just the creator
+        formatted_message = self._convert_attachment_links(
+            formatted_message, db, subscription_owner_id or user_id
+        )
         logger.info(
             f"[_send_messager_notifications] Formatted message with detail_url: {detail_url}, status: {status}"
         )
@@ -770,8 +795,12 @@ class SubscriptionNotificationDispatcher:
             result_summary=result_summary,
             detail_url=detail_url,
         )
-        # Convert attachment links to absolute URLs for external webhooks
-        formatted_message = self._convert_attachment_links(formatted_message)
+        # Convert attachment links to frontend URLs for external webhooks
+        # Note: Webhooks use frontend URLs (not public share URLs) as they may not
+        # need the same sharing flexibility as IM channels
+        formatted_message = self._convert_attachment_links_to_frontend(
+            formatted_message
+        )
 
         try:
             if webhook.type == NotificationWebhookType.DINGTALK:
@@ -1040,29 +1069,51 @@ class SubscriptionNotificationDispatcher:
             )
             return {"success": True}
 
-    def _convert_attachment_links(self, message: str) -> str:
+    def _convert_attachment_links(self, message: str, db: Session, user_id: int) -> str:
         """
-        Convert attachment download URLs to frontend download URLs.
+        Convert attachment download URLs to public share URLs.
 
         This is necessary for external IM channels (DingTalk, etc.) to ensure
-        all downloads go through the frontend (for auth check and better UX).
+        any logged-in user can download the attachment, not just the creator.
 
         Converts:
             /api/attachments/123/download
         To:
-            https://wegent.com/download/attachment/123
+            https://wegent.com/download/attachment/public?token=xxx
+
+        The generated token contains a random nonce to prevent enumeration attacks.
 
         Args:
             message: Original message that may contain attachment links
+            db: Database session for generating share tokens
+            user_id: User ID (attachment owner) for generating share tokens
 
         Returns:
-            Message with converted frontend download URLs
+            Message with converted public share URLs
         """
+        from app.api.endpoints.adapter.attachments import (
+            _generate_public_share_token,
+        )
+        from app.core.config import settings
 
-        # Replace attachment URLs with frontend download URLs
+        base_url = settings.FRONTEND_URL.rstrip("/")
+
+        # Find all attachment URLs and replace with public share URLs
         def replace_url(match: re.Match) -> str:
-            attachment_id = match.group(1)
-            return _convert_to_frontend_attachment_url(attachment_id)
+            attachment_id = int(match.group(1))
+
+            # Generate public share token for this attachment
+            try:
+                token = _generate_public_share_token(
+                    attachment_id=attachment_id, expires_in_days=7
+                )
+                return f"{base_url}/download/shared?token={token}"
+            except Exception as e:
+                logger.warning(
+                    f"Failed to generate public share link for attachment {attachment_id}: {e}"
+                )
+                # Fallback to regular frontend URL
+                return _convert_to_frontend_attachment_url(attachment_id)
 
         converted = re.sub(ATTACHMENT_URL_PATTERN, replace_url, message)
         return converted
