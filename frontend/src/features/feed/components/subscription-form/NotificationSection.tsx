@@ -32,7 +32,11 @@ import {
 } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { CollapsibleSection } from '@/components/common/CollapsibleSection'
-import type { NotificationLevel, NotificationWebhookType } from '@/types/subscription'
+import type {
+  NotificationChannelBindingConfig,
+  NotificationLevel,
+  NotificationWebhookType,
+} from '@/types/subscription'
 import type { NotificationSectionProps } from './types'
 
 // Group binding status card component
@@ -190,7 +194,9 @@ export function NotificationSection({
   }, [devAvailableChannels, devNotificationChannels])
 
   const getBindingConfig = (channelId: number) =>
-    channelBindingConfigs.find(cfg => cfg.channel_id === channelId) ?? {
+    channelBindingConfigs.find(
+      (cfg: NotificationChannelBindingConfig) => cfg.channel_id === channelId
+    ) ?? {
       channel_id: channelId,
       bind_private: true,
       bind_group: false,
@@ -203,8 +209,10 @@ export function NotificationSection({
       bind_group: boolean
     }
   ) => {
-    setChannelBindingConfigs(prev => {
-      const existing = prev.find(cfg => cfg.channel_id === channelId) ?? {
+    setChannelBindingConfigs((prev: NotificationChannelBindingConfig[]) => {
+      const existing = prev.find(
+        (cfg: NotificationChannelBindingConfig) => cfg.channel_id === channelId
+      ) ?? {
         channel_id: channelId,
         bind_private: true,
         bind_group: false,
@@ -213,18 +221,24 @@ export function NotificationSection({
         bind_private: existing.bind_private,
         bind_group: existing.bind_group,
       })
-      const rest = prev.filter(cfg => cfg.channel_id !== channelId)
+      const rest = prev.filter(
+        (cfg: NotificationChannelBindingConfig) => cfg.channel_id !== channelId
+      )
       return [...rest, { ...existing, ...next }]
     })
   }
 
   // Clear group binding info from config
   const clearGroupBinding = (channelId: number) => {
-    setChannelBindingConfigs(prev => {
-      const existing = prev.find(cfg => cfg.channel_id === channelId)
+    setChannelBindingConfigs((prev: NotificationChannelBindingConfig[]) => {
+      const existing = prev.find(
+        (cfg: NotificationChannelBindingConfig) => cfg.channel_id === channelId
+      )
       if (!existing) return prev
 
-      const rest = prev.filter(cfg => cfg.channel_id !== channelId)
+      const rest = prev.filter(
+        (cfg: NotificationChannelBindingConfig) => cfg.channel_id !== channelId
+      )
       return [
         ...rest,
         {
