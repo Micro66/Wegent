@@ -661,6 +661,11 @@ class WegentChatbotHandler(dingtalk_stream.ChatbotHandler):
                             ),
                             conversation_id=message_context.conversation_id,
                         )
+                        # Extract group name from incoming message for group binding
+                        group_name = getattr(
+                            incoming_message, "conversation_title", None
+                        )
+
                         binding_result = subscription_notification_service.handle_dingtalk_binding_from_message(
                             db=db,
                             user_id=user.id,
@@ -671,6 +676,7 @@ class WegentChatbotHandler(dingtalk_stream.ChatbotHandler):
                             sender_staff_id=message_context.extra_data.get(
                                 "sender_staff_id"
                             ),
+                            group_name=group_name,
                         )
                         self.logger.info(
                             "[DingTalkHandler] Binding check result: user_id=%s, channel_id=%s, result=%s",
