@@ -35,6 +35,7 @@ import type {
   Subscription,
   SubscriptionCreateRequest,
   SubscriptionExecutionTarget,
+  SubscriptionGroupInfoPayload,
   SubscriptionKnowledgeBaseRef,
   SubscriptionSkillRef,
   SubscriptionTaskType,
@@ -45,7 +46,6 @@ import type {
 import { toast } from 'sonner'
 import { getCompatibleProviderFromAgentType } from '@/utils/modelCompatibility'
 import { useSocket } from '@/contexts/SocketContext'
-import type { SubscriptionGroupBindingUpdatedPayload } from '@/types/socket'
 import {
   SendAreaSection,
   BasicInfoSection,
@@ -855,26 +855,19 @@ export function SubscriptionForm({
 
   const startBindingSession = useCallback(
     async (channelId: number, bindPrivate: boolean, bindGroup: boolean) => {
-      const targetSubscriptionId = subscription?.id
-      if (!targetSubscriptionId) {
-        toast.error(t('notification_settings.binding_requires_saved_subscription'))
-        return
-      }
-      await subscriptionApis.startDeveloperBindingSession(targetSubscriptionId, {
+      await subscriptionApis.startDeveloperBindingSession(subscription?.id || null, {
         channel_id: channelId,
         bind_private: bindPrivate,
         bind_group: bindGroup,
       })
       setBindingWaitingState(prev => ({ ...prev, [channelId]: true }))
     },
-    [subscription?.id, t]
+    [subscription?.id]
   )
 
   const cancelBindingSession = useCallback(
     async (channelId: number) => {
-      const targetSubscriptionId = subscription?.id
-      if (!targetSubscriptionId) return
-      await subscriptionApis.cancelDeveloperBindingSession(targetSubscriptionId, {
+      await subscriptionApis.cancelDeveloperBindingSession(subscription?.id || null, {
         channel_id: channelId,
       })
       setBindingWaitingState(prev => ({ ...prev, [channelId]: false }))
@@ -882,33 +875,34 @@ export function SubscriptionForm({
     [subscription?.id]
   )
 
+  // Listen for group info received event from WebSocket
   useEffect(() => {
-    if (!socket || !subscription?.id) return
-    const handler = (payload: SubscriptionGroupBindingUpdatedPayload) => {
-      if (payload.subscription_id !== subscription.id) return
-      setBindingWaitingState(prev => ({
-        ...prev,
-        [payload.channel_id]: !payload.completed,
-      }))
-      if (payload.completed) {
-        setChannelBindingConfigs(prev =>
-          prev.map(item =>
-            item.channel_id === payload.channel_id
-              ? {
-                  ...item,
-                  group_conversation_id: payload.conversation_id || item.group_conversation_id,
-                }
-              : item
-          )
+    if (!socket) return
+
+    const handler = (payload: SubscriptionGroupInfoPayload) => {
+      // Update channelBindingConfigs with group info
+      setChannelBindingConfigs(prev =>
+        prev.map(item =>
+          item.channel_id === payload.channel_id
+            ? {
+                ...item,
+                group_conversation_id: payload.group_conversation_id,
+                group_name: payload.group_name,
+              }
+            : item
         )
-        toast.success(t('notification_settings.binding_success'))
-      }
+      )
+      // Update binding waiting state
+      setBindingWaitingState(prev => ({ ...prev, [payload.channel_id]: false }))
+      // Show success toast
+      toast.success(t('notification_settings.binding_success'))
     }
-    socket.on('subscription:group_binding_updated', handler)
+
+    socket.on('subscription:group_info_received', handler)
     return () => {
-      socket.off('subscription:group_binding_updated', handler)
+      socket.off('subscription:group_info_received', handler)
     }
-  }, [socket, subscription?.id, t])
+  }, [socket, t])
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
