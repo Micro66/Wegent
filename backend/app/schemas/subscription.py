@@ -901,6 +901,7 @@ class NotificationChannelBindingConfig(BaseModel):
     group_conversation_id: Optional[str] = Field(
         None, description="Bound group conversation ID for group delivery"
     )
+    group_name: Optional[str] = Field(None, description="Name of the bound group chat")
 
 
 class FollowSettingsResponse(BaseModel):
@@ -974,7 +975,9 @@ class DeveloperBindingSessionResponse(BaseModel):
     """Response for developer notification binding session status."""
 
     status: str = Field(..., description="waiting/cancelled")
-    subscription_id: int = Field(..., description="Subscription ID")
+    subscription_id: Optional[int] = Field(
+        None, description="Subscription ID (None for new subscriptions)"
+    )
     channel_id: int = Field(..., description="Messager channel ID")
     bind_private: Optional[bool] = Field(
         None, description="Whether private binding is required"
