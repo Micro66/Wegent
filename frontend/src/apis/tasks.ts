@@ -238,8 +238,11 @@ export interface TaskHealthResponse {
   database_status: string
   active_streams: TaskHealthActiveStream[]
   running_subtasks_count: number
+  chat_subtasks_count: number
+  executor_subtasks_count: number
   active_streams_count: number
   session_streaming_active: boolean
+  executor_containers_alive: boolean
   orphaned: boolean
   stale_duration_seconds: number | null
   recommendation: 'none' | 'mark_failed' | 'wait'

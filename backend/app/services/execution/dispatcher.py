@@ -611,7 +611,7 @@ class ExecutionDispatcher:
 
         event_count = 0
         last_cancel_check = 0
-        last_heartbeat_check = 0
+        last_heartbeat_time = asyncio.get_event_loop().time()
         cancelled = False
 
         try:
@@ -619,9 +619,11 @@ class ExecutionDispatcher:
             async for event in stream:
                 event_count += 1
 
-                # Update heartbeat every 50 events (to track stream is alive)
-                if event_count - last_heartbeat_check >= 50:
-                    last_heartbeat_check = event_count
+                # Update heartbeat every 10 seconds (to track stream is alive)
+                # Time-based heartbeat ensures slow streams don't timeout
+                current_time = asyncio.get_event_loop().time()
+                if current_time - last_heartbeat_time >= 10:
+                    last_heartbeat_time = current_time
                     await stream_tracker.update_heartbeat(
                         task_id=request.task_id,
                         subtask_id=request.subtask_id,

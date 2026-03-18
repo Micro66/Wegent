@@ -1176,25 +1176,22 @@ class DockerExecutor(Executor):
                     "error_msg": f"Failed to find running container for task {task_id}",
                 }
 
-            task_ids = result.get("task_ids", [])
-            if str(task_id) not in task_ids:
-                logger.warning(f"Task {task_id} is not currently running")
-                return {
-                    "status": "failed",
-                    "error_msg": f"Task {task_id} is not currently running",
-                }
-
-            # Get container details
+            # Get container details directly from containers list
+            # Note: Don't use task_ids list for checking because it relies on
+            # subtask_next_id label which may not be updated correctly.
+            # Instead, check if there's a container with matching task_id.
             containers = result.get("containers", [])
             container_detail = next(
                 (d for d in containers if str(d.get("task_id")) == str(task_id)), None
             )
 
             if not container_detail:
-                logger.error(f"Could not find container details for task {task_id}")
+                logger.warning(
+                    f"Task {task_id} is not currently running (no container found)"
+                )
                 return {
                     "status": "failed",
-                    "error_msg": f"Could not find container details for task {task_id}",
+                    "error_msg": f"Task {task_id} is not currently running",
                 }
 
             container_name = container_detail.get("container_name")
@@ -1230,8 +1227,8 @@ class DockerExecutor(Executor):
                 logger.info(f"Successfully cancelled task {task_id}")
                 return {
                     "status": "success",
-                    "task_ids": task_ids,
-                    "containers": containers,
+                    "task_ids": [str(task_id)],
+                    "containers": [container_detail],
                     "message": f"Task {task_id} cancellation requested successfully",
                 }
             except requests.RequestException as e:

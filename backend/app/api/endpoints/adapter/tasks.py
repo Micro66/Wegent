@@ -330,21 +330,31 @@ async def get_task_health(
     """
     Get task health status for real state verification.
 
-    This endpoint checks the actual execution state by verifying active streams in Redis,
-    not just the database status. It helps detect "orphaned" tasks where the database
-    shows RUNNING but there's no active stream.
+    This endpoint checks the actual execution state by verifying:
+    - Chat tasks: Active streams in Redis (StreamTracker)
+    - Executor tasks (ClaudeCode/Agno/Dify): Container status via ExecutorManager API
+
+    It helps detect "orphaned" tasks where the database shows RUNNING but
+    there's no actual execution (no active stream or container).
 
     Returns:
         Task health information including:
         - status: 'healthy', 'unhealthy', or 'unknown'
         - database_status: Current status in database
         - active_streams: List of active streams with heartbeat info
-        - orphaned: True if database shows RUNNING but no active stream
+        - executor_containers_alive: Whether executor containers are running
+        - orphaned: True if database shows RUNNING but no active execution
         - stale_duration_seconds: How long the task has been orphaned
         - recommendation: 'none', 'mark_failed', or 'wait'
     """
     from app.models.subtask import Subtask
     from app.services.chat.storage import session_manager
+    from app.services.execution.executor_health import (
+        check_executor_containers_alive,
+        get_subtask_shell_type,
+        is_chat_shell,
+        is_executor_shell,
+    )
 
     # Get all subtasks for this task
     subtasks = (
@@ -358,27 +368,52 @@ async def get_task_health(
     running_subtasks = [s for s in subtasks if s.status == "RUNNING"]
     running_subtask_ids = {s.id for s in running_subtasks}
 
-    # Get active streams from StreamTracker (new heartbeat-based tracking)
+    # Categorize running subtasks by shell type
+    chat_subtasks = []
+    executor_subtasks = []
+
+    for subtask in running_subtasks:
+        shell_type = get_subtask_shell_type(subtask, db)
+        if is_chat_shell(shell_type):
+            chat_subtasks.append(subtask)
+        elif is_executor_shell(shell_type):
+            executor_subtasks.append(subtask)
+
+    # Check Chat tasks: Use StreamTracker (Redis-based heartbeat)
     active_streams = await stream_tracker.get_task_active_streams(task_id)
 
     # Also check session_manager's task streaming status (legacy tracking)
     # This is set when streaming starts and cleared when streaming ends
     session_streaming_status = await session_manager.get_task_streaming_status(task_id)
 
-    # A stream is considered active if either:
-    # 1. StreamTracker has records (heartbeat-based, survives process restarts via TTL)
-    # 2. Session manager has streaming status (set at stream start, cleared at end)
-    has_active_stream = len(active_streams) > 0 or session_streaming_status is not None
+    has_active_chat_stream = (
+        len(active_streams) > 0 or session_streaming_status is not None
+    )
+
+    # Check Executor tasks: Query ExecutorManager for container status
+    executor_containers_alive = False
+    if executor_subtasks:
+        executor_containers_alive = await check_executor_containers_alive(
+            task_id, executor_subtasks
+        )
+
+    # A stream/execution is considered active if either:
+    # 1. Chat stream: StreamTracker has records or session_manager has streaming status
+    # 2. Executor tasks: Container is alive according to ExecutorManager
+    has_active_execution = has_active_chat_stream or executor_containers_alive
 
     # Determine orphaned status:
-    # A task is orphaned if database shows RUNNING but no active streams in Redis
-    orphaned = len(running_subtasks) > 0 and not has_active_stream
+    # A task is orphaned if database shows RUNNING but no active execution
+    orphaned = len(running_subtasks) > 0 and not has_active_execution
 
     logger.info(
         f"[TaskHealth] task_id={task_id}, "
         f"running_subtasks={len(running_subtasks)}, "
+        f"chat_subtasks={len(chat_subtasks)}, "
+        f"executor_subtasks={len(executor_subtasks)}, "
         f"stream_tracker_streams={len(active_streams)}, "
-        f"session_streaming_status={session_streaming_status is not None}, "
+        f"session_streaming={session_streaming_status is not None}, "
+        f"executor_alive={executor_containers_alive}, "
         f"orphaned={orphaned}"
     )
 
@@ -389,8 +424,24 @@ async def get_task_health(
         from datetime import datetime, timezone
 
         now = datetime.now(timezone.utc)
+
+        def ensure_utc(dt):
+            """Ensure datetime is UTC aware.
+
+            Database stores naive datetimes (assumed to be UTC or local time).
+            We need to handle both cases correctly.
+            """
+            if dt.tzinfo is None:
+                # Naive datetime - assume it's in local timezone and convert to UTC
+                # For MySQL, timestamps are usually stored in the server timezone
+                # We'll treat naive datetimes as already being UTC to avoid conversion issues
+                return dt.replace(tzinfo=timezone.utc)
+            else:
+                # Already has timezone - convert to UTC
+                return dt.astimezone(timezone.utc)
+
         oldest_update = min(
-            (s.updated_at.replace(tzinfo=timezone.utc) for s in running_subtasks),
+            (ensure_utc(s.updated_at) for s in running_subtasks),
             default=now,
         )
         stale_duration_seconds = int((now - oldest_update).total_seconds())
@@ -399,16 +450,16 @@ async def get_task_health(
     if orphaned:
         status = "unhealthy"
         recommendation = "mark_failed"
-    elif len(running_subtasks) > 0 and has_active_stream:
-        # Both DB and Redis agree task is running
+    elif len(running_subtasks) > 0 and has_active_execution:
+        # Database shows RUNNING and there's active execution (stream or container)
         status = "healthy"
         recommendation = "none"
-    elif len(running_subtasks) == 0 and not has_active_stream:
-        # Task is not running in either DB or Redis
+    elif len(running_subtasks) == 0 and not has_active_execution:
+        # Task is not running in either DB or execution layer
         status = "healthy"  # Not running is a valid healthy state
         recommendation = "none"
     else:
-        # Redis has streams but DB doesn't show RUNNING (inconsistent state)
+        # Execution layer has activity but DB doesn't show RUNNING (inconsistent state)
         status = "unknown"
         recommendation = "wait"
 
@@ -442,8 +493,11 @@ async def get_task_health(
         "database_status": database_status,
         "active_streams": active_streams_response,
         "running_subtasks_count": len(running_subtasks),
+        "chat_subtasks_count": len(chat_subtasks),
+        "executor_subtasks_count": len(executor_subtasks),
         "active_streams_count": len(active_streams),
         "session_streaming_active": session_streaming_status is not None,
+        "executor_containers_alive": executor_containers_alive,
         "orphaned": orphaned,
         "stale_duration_seconds": stale_duration_seconds,
         "recommendation": recommendation,

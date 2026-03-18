@@ -333,7 +333,9 @@ class StreamTracker:
 
                 streams = []
                 now = datetime.now(timezone.utc).timestamp()
-                stale_threshold = 60  # 60 seconds without heartbeat = stale
+                stale_threshold = (
+                    3600  # 3600 seconds (60 minutes) without heartbeat = stale
+                )
 
                 for key in keys:
                     data = await client.hgetall(key)
@@ -390,7 +392,9 @@ class StreamTracker:
 
                 streams = []
                 now = datetime.now(timezone.utc).timestamp()
-                stale_threshold = 60  # 60 seconds without heartbeat = stale
+                stale_threshold = (
+                    3600  # 3600 seconds (60 minutes) without heartbeat = stale
+                )
 
                 for key in keys:
                     data = await client.hgetall(key)
