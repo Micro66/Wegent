@@ -222,6 +222,29 @@ export interface TaskSkillsResponse {
   preload_skills: string[]
 }
 
+// Task health check types
+export interface TaskHealthActiveStream {
+  subtask_id: number
+  shell_type: string
+  started_at: string
+  last_heartbeat: number
+  heartbeat_age_seconds: number
+  executor_location: string
+}
+
+export interface TaskHealthResponse {
+  task_id: number
+  status: 'healthy' | 'unhealthy' | 'unknown'
+  database_status: string
+  active_streams: TaskHealthActiveStream[]
+  running_subtasks_count: number
+  active_streams_count: number
+  session_streaming_active: boolean
+  orphaned: boolean
+  stale_duration_seconds: number | null
+  recommendation: 'none' | 'mark_failed' | 'wait'
+}
+
 // Task Services
 
 export const taskApis = {
@@ -465,6 +488,38 @@ export const taskApis = {
     taskId: number
   ): Promise<{ task_id: number; preserve_executor: boolean; message: string }> => {
     return apiClient.delete(`/tasks/${taskId}/preserve-executor`)
+  },
+
+  /**
+   * Get task health status for real state verification
+   * Checks active streams in Redis to detect orphaned tasks
+   * @param taskId - Task ID
+   */
+  getTaskHealth: async (taskId: number): Promise<TaskHealthResponse> => {
+    return apiClient.get(`/tasks/${taskId}/health`)
+  },
+
+  /**
+   * Clean up an orphaned task (database shows RUNNING but no active stream)
+   * @param taskId - Task ID
+   * @param partialContent - Optional partial content from WebSocket to preserve
+   */
+  cleanupOrphanedTask: async (
+    taskId: number,
+    partialContent?: string
+  ): Promise<{
+    task_id: number
+    cleaned: boolean
+    message: string
+    affected_subtasks: Array<{
+      subtask_id: number
+      previous_status: string
+      new_status: string
+    }>
+  }> => {
+    return apiClient.post(`/tasks/${taskId}/cleanup-orphaned`, {
+      partial_content: partialContent,
+    })
   },
 }
 

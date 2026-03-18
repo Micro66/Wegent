@@ -27,6 +27,7 @@ if TYPE_CHECKING:
     from openai import AsyncOpenAI
 
 from app.core.async_utils import run_in_main_loop
+from app.services.chat.stream_tracker import stream_tracker
 from shared.models import (
     EventType,
     ExecutionEvent,
@@ -542,6 +543,14 @@ class ExecutionDispatcher:
         # Register stream for cancellation tracking
         cancel_event = await session_manager.register_stream(request.subtask_id)
 
+        # Register stream in StreamTracker for real state verification
+        await stream_tracker.register_stream(
+            task_id=request.task_id,
+            subtask_id=request.subtask_id,
+            shell_type=self._get_shell_type(request),
+            executor_location="chat_shell",
+        )
+
         # Send START event
         await emitter.emit_start(
             task_id=request.task_id,
@@ -602,12 +611,21 @@ class ExecutionDispatcher:
 
         event_count = 0
         last_cancel_check = 0
+        last_heartbeat_check = 0
         cancelled = False
 
         try:
             # Process streaming events
             async for event in stream:
                 event_count += 1
+
+                # Update heartbeat every 50 events (to track stream is alive)
+                if event_count - last_heartbeat_check >= 50:
+                    last_heartbeat_check = event_count
+                    await stream_tracker.update_heartbeat(
+                        task_id=request.task_id,
+                        subtask_id=request.subtask_id,
+                    )
 
                 # Check for cancellation every 10 events (to avoid too frequent Redis calls)
                 if event_count - last_cancel_check >= 10:
@@ -695,6 +713,11 @@ class ExecutionDispatcher:
         finally:
             # Unregister stream to clean up
             await session_manager.unregister_stream(request.subtask_id)
+            # Unregister from StreamTracker for real state verification
+            await stream_tracker.unregister_stream(
+                task_id=request.task_id,
+                subtask_id=request.subtask_id,
+            )
 
     async def _dispatch_image_generation(
         self,

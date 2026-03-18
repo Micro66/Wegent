@@ -25,6 +25,8 @@
 import React, { createContext, useContext, useCallback, useRef, useEffect, ReactNode } from 'react'
 import { useSocket, ChatEventHandlers, SkillEventHandlers } from '@/contexts/SocketContext'
 import { usePageVisibility } from '@/hooks/usePageVisibility'
+import { useHealthCheckBeforeStop } from '../hooks'
+import { taskApis } from '@/apis/tasks'
 import {
   ChatSendPayload,
   ChatStartPayload,
@@ -798,6 +800,19 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
     [isConnected, sendChatMessage, joinTask]
   )
 
+  // Health check before stopping
+  const { checkBeforeStop } = useHealthCheckBeforeStop()
+
+  /**
+   * Format duration in seconds to human readable string
+   */
+  const formatDuration = useCallback((seconds: number | null): string => {
+    if (seconds === null) return ''
+    if (seconds < 60) return `${seconds}秒`
+    if (seconds < 3600) return `${Math.floor(seconds / 60)}分钟`
+    return `${Math.floor(seconds / 3600)}小时${Math.floor((seconds % 3600) / 60)}分钟`
+  }, [])
+
   /**
    * Stop the stream for a specific task
    */
@@ -805,6 +820,40 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
     async (taskId: number, backupSubtasks?: TaskDetailSubtask[], team?: Team): Promise<void> => {
       const machine = taskStateManager.get(taskId)
       if (!machine || machine.getState().status !== 'streaming') {
+        return
+      }
+
+      // Check task health before attempting to stop
+      const healthCheck = await checkBeforeStop(taskId)
+      console.log('[ChatStreamContext] Health check in stopStream:', {
+        taskId,
+        isOrphaned: healthCheck.isOrphaned,
+        isHealthy: healthCheck.isHealthy,
+        health: healthCheck.health,
+      })
+      if (healthCheck.isOrphaned && healthCheck.health) {
+        // Task is orphaned (database shows RUNNING but no active stream)
+        // Call backend to clean up and mark as FAILED
+        console.warn(
+          '[ChatStreamContext] Task is orphaned, calling cleanup API:',
+          healthCheck.health
+        )
+        try {
+          const cleanupResult = await taskApis.cleanupOrphanedTask(taskId)
+          console.log('[ChatStreamContext] Cleanup result:', cleanupResult)
+
+          // Mark as failed in state machine
+          const state = machine.getState()
+          const subtaskId = state.streamingSubtaskId
+          if (subtaskId) {
+            machine.handleChatError(
+              subtaskId,
+              `任务已异常终止（已死亡 ${formatDuration(healthCheck.health.stale_duration_seconds)}）`
+            )
+          }
+        } catch (error) {
+          console.error('[ChatStreamContext] Failed to cleanup orphaned task:', error)
+        }
         return
       }
 
@@ -866,7 +915,7 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
       }
       machine.setStopping(false)
     },
-    [cancelChatStream]
+    [cancelChatStream, checkBeforeStop, formatDuration]
   )
 
   /**

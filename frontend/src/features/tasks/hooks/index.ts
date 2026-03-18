@@ -16,3 +16,7 @@ export type {
   UseModelSelectionOptions,
   UseModelSelectionReturn,
 } from './useModelSelection'
+
+export { useTaskHealthCheck, useHealthCheckBeforeStop } from './useTaskHealthCheck'
+
+export type { UseTaskHealthCheckOptions } from './useTaskHealthCheck'

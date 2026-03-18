@@ -43,6 +43,7 @@ from app.schemas.task import (
     TaskUpdate,
 )
 from app.services.adapters.task_kinds import task_kinds_service
+from app.services.chat.stream_tracker import StreamInfo, stream_tracker
 from app.services.remote_workspace_service import remote_workspace_service
 from app.services.shared_task import shared_task_service
 
@@ -318,6 +319,247 @@ async def cancel_task(
         user_id=current_user.id,
         background_task_runner=background_tasks.add_task,
     )
+
+
+@router.get("/{task_id}/health")
+async def get_task_health(
+    task_id: int = Depends(with_task_telemetry),
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Get task health status for real state verification.
+
+    This endpoint checks the actual execution state by verifying active streams in Redis,
+    not just the database status. It helps detect "orphaned" tasks where the database
+    shows RUNNING but there's no active stream.
+
+    Returns:
+        Task health information including:
+        - status: 'healthy', 'unhealthy', or 'unknown'
+        - database_status: Current status in database
+        - active_streams: List of active streams with heartbeat info
+        - orphaned: True if database shows RUNNING but no active stream
+        - stale_duration_seconds: How long the task has been orphaned
+        - recommendation: 'none', 'mark_failed', or 'wait'
+    """
+    from app.models.subtask import Subtask
+    from app.services.chat.storage import session_manager
+
+    # Get all subtasks for this task
+    subtasks = (
+        db.query(Subtask)
+        .filter(Subtask.task_id == task_id)
+        .order_by(Subtask.id.desc())
+        .all()
+    )
+
+    # Check for running subtasks in database
+    running_subtasks = [s for s in subtasks if s.status == "RUNNING"]
+    running_subtask_ids = {s.id for s in running_subtasks}
+
+    # Get active streams from StreamTracker (new heartbeat-based tracking)
+    active_streams = await stream_tracker.get_task_active_streams(task_id)
+
+    # Also check session_manager's task streaming status (legacy tracking)
+    # This is set when streaming starts and cleared when streaming ends
+    session_streaming_status = await session_manager.get_task_streaming_status(task_id)
+
+    # A stream is considered active if either:
+    # 1. StreamTracker has records (heartbeat-based, survives process restarts via TTL)
+    # 2. Session manager has streaming status (set at stream start, cleared at end)
+    has_active_stream = len(active_streams) > 0 or session_streaming_status is not None
+
+    # Determine orphaned status:
+    # A task is orphaned if database shows RUNNING but no active streams in Redis
+    orphaned = len(running_subtasks) > 0 and not has_active_stream
+
+    logger.info(
+        f"[TaskHealth] task_id={task_id}, "
+        f"running_subtasks={len(running_subtasks)}, "
+        f"stream_tracker_streams={len(active_streams)}, "
+        f"session_streaming_status={session_streaming_status is not None}, "
+        f"orphaned={orphaned}"
+    )
+
+    # Calculate stale duration if orphaned
+    stale_duration_seconds = None
+    if orphaned and running_subtasks:
+        # Use the oldest running subtask's updated_at as stale start time
+        from datetime import datetime, timezone
+
+        now = datetime.now(timezone.utc)
+        oldest_update = min(
+            (s.updated_at.replace(tzinfo=timezone.utc) for s in running_subtasks),
+            default=now,
+        )
+        stale_duration_seconds = int((now - oldest_update).total_seconds())
+
+    # Determine status
+    if orphaned:
+        status = "unhealthy"
+        recommendation = "mark_failed"
+    elif len(running_subtasks) > 0 and has_active_stream:
+        # Both DB and Redis agree task is running
+        status = "healthy"
+        recommendation = "none"
+    elif len(running_subtasks) == 0 and not has_active_stream:
+        # Task is not running in either DB or Redis
+        status = "healthy"  # Not running is a valid healthy state
+        recommendation = "none"
+    else:
+        # Redis has streams but DB doesn't show RUNNING (inconsistent state)
+        status = "unknown"
+        recommendation = "wait"
+
+    # Build active streams response
+    active_streams_response = [
+        {
+            "subtask_id": s.subtask_id,
+            "shell_type": s.shell_type,
+            "started_at": s.started_at,
+            "last_heartbeat": s.last_heartbeat,
+            "heartbeat_age_seconds": s.heartbeat_age_seconds,
+            "executor_location": s.executor_location,
+        }
+        for s in active_streams
+    ]
+
+    # Get database status (use the most recent subtask status, or COMPLETED if no subtasks)
+    if subtasks:
+        # Prioritize RUNNING status if any subtask is running
+        database_status = (
+            "RUNNING"
+            if any(s.status == "RUNNING" for s in subtasks)
+            else subtasks[0].status
+        )
+    else:
+        database_status = "COMPLETED"
+
+    return {
+        "task_id": task_id,
+        "status": status,
+        "database_status": database_status,
+        "active_streams": active_streams_response,
+        "running_subtasks_count": len(running_subtasks),
+        "active_streams_count": len(active_streams),
+        "session_streaming_active": session_streaming_status is not None,
+        "orphaned": orphaned,
+        "stale_duration_seconds": stale_duration_seconds,
+        "recommendation": recommendation,
+    }
+
+
+@router.post("/{task_id}/cleanup-orphaned")
+async def cleanup_orphaned_task(
+    task_id: int = Depends(with_task_telemetry),
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Clean up an orphaned task (database shows RUNNING but no active stream).
+
+    This endpoint:
+    1. Marks running subtasks as FAILED in database
+    2. Cleans up Redis残留数据
+    3. Returns the cleanup result
+
+    Returns:
+        Cleanup result with affected subtasks
+    """
+    from app.models.subtask import Subtask
+    from app.services.chat.storage.db import db_handler
+
+    # Get running subtasks for this task
+    running_subtasks = (
+        db.query(Subtask)
+        .filter(Subtask.task_id == task_id, Subtask.status == "RUNNING")
+        .all()
+    )
+
+    if not running_subtasks:
+        return {
+            "task_id": task_id,
+            "cleaned": False,
+            "message": "No running subtasks found",
+            "affected_subtasks": [],
+        }
+
+    # Import session_manager to get cached content from Redis
+    from app.services.chat.storage import session_manager
+
+    # Mark each running subtask as FAILED
+    affected_subtasks = []
+    for subtask in running_subtasks:
+        try:
+            # Get cached content from session_manager (Redis)
+            # This contains the partial streaming content that hasn't been saved to DB yet
+            cached_content = await session_manager.get_streaming_content(subtask.id)
+
+            # Preserve existing result (partial content) if available
+            existing_result = subtask.result if subtask.result else {}
+
+            # Build result to save
+            if isinstance(existing_result, dict):
+                # Keep the existing value but mark as interrupted
+                result_to_save = existing_result.copy()
+            else:
+                # If result is not a dict, create a new one
+                result_to_save = {
+                    "value": str(existing_result) if existing_result else ""
+                }
+
+            # If we have cached content from Redis, use it (it may be newer than DB)
+            if cached_content:
+                result_to_save["value"] = cached_content
+                logger.info(
+                    f"[CleanupOrphaned] Retrieved cached_content for subtask {subtask.id}, "
+                    f"content_length={len(cached_content)}"
+                )
+
+            # Mark as interrupted
+            result_to_save["interrupted"] = True
+            result_to_save["interrupted_reason"] = (
+                "Task executor terminated unexpectedly"
+            )
+
+            await db_handler.update_subtask_status(
+                subtask.id, "FAILED", result=result_to_save
+            )
+            affected_subtasks.append(
+                {
+                    "subtask_id": subtask.id,
+                    "previous_status": "RUNNING",
+                    "new_status": "FAILED",
+                }
+            )
+            logger.info(
+                f"[CleanupOrphaned] Marked subtask {subtask.id} as FAILED, "
+                f"preserved_result={bool(existing_result)}, has_cached_content={bool(cached_content)}"
+            )
+        except Exception as e:
+            logger.error(
+                f"[CleanupOrphaned] Failed to update subtask {subtask.id}: {e}"
+            )
+
+    # Clean up Redis残留数据
+    try:
+        # Clean up StreamTracker data
+        active_streams = await stream_tracker.get_task_active_streams(task_id)
+        for stream in active_streams:
+            await stream_tracker.unregister_stream(task_id, stream.subtask_id)
+            logger.info(
+                f"[CleanupOrphaned] Unregistered stream: task_id={task_id}, subtask_id={stream.subtask_id}"
+            )
+    except Exception as e:
+        logger.error(f"[CleanupOrphaned] Failed to cleanup Redis: {e}")
+
+    return {
+        "task_id": task_id,
+        "cleaned": len(affected_subtasks) > 0,
+        "message": f"Cleaned up {len(affected_subtasks)} orphaned subtasks",
+        "affected_subtasks": affected_subtasks,
+    }
 
 
 @router.get("/{task_id}/pipeline-stage-info", response_model=PipelineStageInfo)

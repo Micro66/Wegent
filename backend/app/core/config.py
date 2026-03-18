@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import json
+import os
 from pathlib import Path
 from typing import Any, Mapping, Optional, Tuple, Type
 
@@ -122,6 +123,24 @@ class Settings(BaseSettings):
     STREAMING_DB_SAVE_INTERVAL: float = 5.0  # Database save interval (seconds)
     STREAMING_REDIS_TTL: int = 300  # Redis streaming cache TTL (seconds)
     STREAMING_MIN_CHARS_TO_SAVE: int = 50  # Minimum characters to save on disconnect
+
+    # Stream tracking configuration (for real state verification)
+    # TTL for stream metadata in Redis (seconds)
+    STREAM_META_TTL_SECONDS: int = int(
+        os.getenv("STREAM_META_TTL_SECONDS", "3600")
+    )  # 1 hour
+    # TTL for task-level stream count in Redis (seconds)
+    STREAM_TASK_COUNT_TTL_SECONDS: int = int(
+        os.getenv("STREAM_TASK_COUNT_TTL_SECONDS", "3600")
+    )  # 1 hour
+    # Cleanup task interval (minutes)
+    STREAM_CLEANUP_INTERVAL_MINUTES: int = int(
+        os.getenv("STREAM_CLEANUP_INTERVAL_MINUTES", "5")
+    )
+    # Stale stream threshold - how long without heartbeat before considering dead (seconds)
+    STREAM_STALE_THRESHOLD_SECONDS: int = int(
+        os.getenv("STREAM_STALE_THRESHOLD_SECONDS", "3600")
+    )  # 1 hour
 
     # Task append expiration (hours)
     APPEND_CHAT_TASK_EXPIRE_HOURS: int = 2
