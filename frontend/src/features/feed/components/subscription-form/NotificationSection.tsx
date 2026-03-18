@@ -210,6 +210,24 @@ export function NotificationSection({
 
   // Fetch runtime config for binding steps
   useEffect(() => {
+    // First try to read from NEXT_PUBLIC_* env var directly (build-time)
+    const publicConfig = process.env.NEXT_PUBLIC_BIND_GROUP_STEPS
+    if (publicConfig) {
+      try {
+        const parsed = JSON.parse(publicConfig) as BindGroupConfig
+        if (parsed.steps && parsed.steps.length >= 3) {
+          setBindConfig({
+            variables: { ...defaultBindConfig.variables, ...parsed.variables },
+            steps: parsed.steps,
+          })
+          return
+        }
+      } catch {
+        // Fall through to API fetch
+      }
+    }
+
+    // Otherwise fetch from runtime API
     fetchRuntimeConfig()
       .then(config => {
         if (config.bindGroupSteps) {
