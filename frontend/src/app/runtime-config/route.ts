@@ -112,5 +112,16 @@ export async function GET() {
       process.env.RUNTIME_OTEL_COLLECTOR_ENDPOINT ||
       process.env.NEXT_PUBLIC_OTEL_COLLECTOR_ENDPOINT ||
       'http://localhost:4318',
+
+    // Bind group description text (supports multiple paragraphs separated by |)
+    bindGroupDesc:
+      process.env.RUNTIME_BIND_GROUP_DESC || process.env.NEXT_PUBLIC_BIND_GROUP_DESC || '',
+
+    // Bind group steps configuration (JSON with variables and steps)
+    // Example: {"variables":{"botName":"机器人","featureName":"智能群助手"},"steps":[{"title":"添加{{botName}}","hint":"打开{{featureName}}..."}]}
+    bindGroupSteps:
+      process.env.RUNTIME_BIND_GROUP_STEPS ||
+      process.env.NEXT_PUBLIC_BIND_GROUP_STEPS ||
+      '{"variables":{"botName":"机器人","featureName":"智能群助手"},"steps":[{"title":"添加{{botName}}到群聊","hint":"打开群设置 → {{featureName}} → 添加机器人 → 搜索并添加{{botName}}"},{"title":"点击开始绑定","hint":""},{"title":"在群聊中 @{{botName}} 发送消息","hint":""}]}',
   })
 }

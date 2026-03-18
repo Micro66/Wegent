@@ -43,6 +43,10 @@ export interface RuntimeConfig {
   otelServiceName: string
   /** OpenTelemetry collector endpoint */
   otelCollectorEndpoint: string
+  /** Bind group description text (supports multiple paragraphs separated by |) */
+  bindGroupDesc: string
+  /** Bind group steps configuration (JSON string with array of {title, hint}) */
+  bindGroupSteps: string
 }
 
 // Cache for runtime config to avoid repeated API calls
@@ -97,6 +101,10 @@ export const fetchRuntimeConfig = async (): Promise<RuntimeConfig> => {
         otelServiceName: process.env.NEXT_PUBLIC_OTEL_SERVICE_NAME || 'wegent-frontend',
         otelCollectorEndpoint:
           process.env.NEXT_PUBLIC_OTEL_COLLECTOR_ENDPOINT || 'http://localhost:4318',
+        bindGroupDesc: process.env.NEXT_PUBLIC_BIND_GROUP_DESC || '',
+        bindGroupSteps:
+          process.env.NEXT_PUBLIC_BIND_GROUP_STEPS ||
+          '{"variables":{"botName":"机器人","featureName":"智能群助手"},"steps":[{"title":"添加{{botName}}到群聊","hint":"打开群设置 → {{featureName}} → 添加机器人 → 搜索并添加{{botName}}"},{"title":"点击开始绑定","hint":""},{"title":"在群聊中 @{{botName}} 发送消息","hint":""}]}',
       }
       runtimeConfigCache = fallback
       return fallback
@@ -134,6 +142,10 @@ export const getRuntimeConfigSync = (): RuntimeConfig => {
     otelServiceName: process.env.NEXT_PUBLIC_OTEL_SERVICE_NAME || 'wegent-frontend',
     otelCollectorEndpoint:
       process.env.NEXT_PUBLIC_OTEL_COLLECTOR_ENDPOINT || 'http://localhost:4318',
+    bindGroupDesc: process.env.NEXT_PUBLIC_BIND_GROUP_DESC || '',
+    bindGroupSteps:
+      process.env.NEXT_PUBLIC_BIND_GROUP_STEPS ||
+      '{"variables":{"botName":"机器人","featureName":"智能群助手"},"steps":[{"title":"添加{{botName}}到群聊","hint":"打开群设置 → {{featureName}} → 添加机器人 → 搜索并添加{{botName}}"},{"title":"点击开始绑定","hint":""},{"title":"在群聊中 @{{botName}} 发送消息","hint":""}]}',
   }
 }
 
