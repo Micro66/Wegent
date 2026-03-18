@@ -11,7 +11,7 @@
 import { Bell, CheckCircle, Loader2, MessageCircle, Plus, Trash2 } from 'lucide-react'
 import { useMemo, useState, useEffect, useCallback } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
-import { fetchRuntimeConfig } from '@/lib/runtime-config'
+import { fetchRuntimeConfig, DEFAULT_BIND_GROUP_STEPS } from '@/lib/runtime-config'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
@@ -177,19 +177,7 @@ interface BindGroupConfig {
   steps: BindGroupStep[]
 }
 
-const defaultBindConfig: BindGroupConfig = {
-  variables: {
-    botName: '机器人',
-  },
-  steps: [
-    {
-      title: '添加{{botName}}到群聊',
-      hint: '打开群设置 → 机器人 → 添加机器人 → 搜索并添加{{botName}}',
-    },
-    { title: '点击开始绑定', hint: '' },
-    { title: '在群聊中 @{{botName}} 发送消息', hint: '' },
-  ],
-}
+const defaultBindConfig: BindGroupConfig = JSON.parse(DEFAULT_BIND_GROUP_STEPS)
 
 // Replace template variables like {{botName}} with actual values
 const replaceVariables = (text: string, variables: Record<string, string>): string => {
@@ -702,11 +690,11 @@ export function NotificationSection({
       <Dialog
         open={groupBindingDialogChannel !== null}
         onOpenChange={open => {
-          if (!open && groupBindingDialogChannel) {
-            void onCancelBinding(groupBindingDialogChannel)
-            setGroupBindingState('idle')
-          }
           if (!open) {
+            if (groupBindingDialogChannel) {
+              void onCancelBinding(groupBindingDialogChannel)
+            }
+            setGroupBindingDialogChannel(null)
             setGroupBindingState('idle')
           }
         }}

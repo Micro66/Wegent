@@ -49,6 +49,19 @@ export interface RuntimeConfig {
   bindGroupSteps: string
 }
 
+/** Default bind group steps configuration */
+export const DEFAULT_BIND_GROUP_STEPS = JSON.stringify({
+  variables: { botName: '机器人' },
+  steps: [
+    {
+      title: '添加{{botName}}到群聊',
+      hint: '打开“群设置” → 选择“机器人” → 选择“添加机器人” → 搜索并添加{{botName}}',
+    },
+    { title: '点击开始绑定', hint: '' },
+    { title: '在群聊中 @{{botName}} 发送消息', hint: '' },
+  ],
+})
+
 // Cache for runtime config to avoid repeated API calls
 let runtimeConfigCache: RuntimeConfig | null = null
 let runtimeConfigPromise: Promise<RuntimeConfig> | null = null
@@ -102,9 +115,7 @@ export const fetchRuntimeConfig = async (): Promise<RuntimeConfig> => {
         otelCollectorEndpoint:
           process.env.NEXT_PUBLIC_OTEL_COLLECTOR_ENDPOINT || 'http://localhost:4318',
         bindGroupDesc: process.env.NEXT_PUBLIC_BIND_GROUP_DESC || '',
-        bindGroupSteps:
-          process.env.NEXT_PUBLIC_BIND_GROUP_STEPS ||
-          '{"variables":{"botName":"机器人","featureName":"智能群助手"},"steps":[{"title":"添加{{botName}}到群聊","hint":"打开群设置 → {{featureName}} → 添加机器人 → 搜索并添加{{botName}}"},{"title":"点击开始绑定","hint":""},{"title":"在群聊中 @{{botName}} 发送消息","hint":""}]}',
+        bindGroupSteps: process.env.NEXT_PUBLIC_BIND_GROUP_STEPS || DEFAULT_BIND_GROUP_STEPS,
       }
       runtimeConfigCache = fallback
       return fallback
@@ -143,9 +154,7 @@ export const getRuntimeConfigSync = (): RuntimeConfig => {
     otelCollectorEndpoint:
       process.env.NEXT_PUBLIC_OTEL_COLLECTOR_ENDPOINT || 'http://localhost:4318',
     bindGroupDesc: process.env.NEXT_PUBLIC_BIND_GROUP_DESC || '',
-    bindGroupSteps:
-      process.env.NEXT_PUBLIC_BIND_GROUP_STEPS ||
-      '{"variables":{"botName":"机器人","featureName":"智能群助手"},"steps":[{"title":"添加{{botName}}到群聊","hint":"打开群设置 → {{featureName}} → 添加机器人 → 搜索并添加{{botName}}"},{"title":"点击开始绑定","hint":""},{"title":"在群聊中 @{{botName}} 发送消息","hint":""}]}',
+    bindGroupSteps: process.env.NEXT_PUBLIC_BIND_GROUP_STEPS || DEFAULT_BIND_GROUP_STEPS,
   }
 }
 
