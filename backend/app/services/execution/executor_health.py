@@ -14,7 +14,7 @@ Key Design:
 """
 
 import logging
-from typing import List, Optional
+from typing import Any, List
 
 import httpx
 from sqlalchemy.orm import Session
@@ -29,22 +29,6 @@ logger = logging.getLogger(__name__)
 
 # Executor shell types that run in containers
 EXECUTOR_SHELL_TYPES = {"ClaudeCode", "Agno", "Dify"}
-
-
-def generate_executor_name(task_id: int, subtask_id: Optional[int] = None) -> str:
-    """
-    Generate executor container name (consistent with ExecutorManager naming).
-
-    Args:
-        task_id: Task ID
-        subtask_id: Optional subtask ID
-
-    Returns:
-        Executor container name
-    """
-    if subtask_id:
-        return f"executor-task-{task_id}-{subtask_id}"
-    return f"executor-task-{task_id}"
 
 
 async def check_executor_container_alive(executor_name: str) -> dict:
@@ -98,6 +82,37 @@ async def check_executor_container_alive(executor_name: str) -> dict:
         return {"alive": False, "exists": False, "status": "error"}
 
 
+async def get_running_executor_containers() -> list[dict[str, Any]]:
+    """Fetch the ExecutorManager runtime snapshot."""
+    executor_manager_url = settings.EXECUTOR_MANAGER_URL
+
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"{executor_manager_url}/executor-manager/executor/load",
+                timeout=5.0,
+            )
+
+        if response.status_code != 200:
+            logger.warning(
+                "[ExecutorHealth] Unexpected executor/load status: %s",
+                response.status_code,
+            )
+            return []
+
+        payload = response.json()
+        containers = payload.get("containers", [])
+        return containers if isinstance(containers, list) else []
+    except httpx.TimeoutException:
+        logger.warning("[ExecutorHealth] Timeout fetching executor runtime snapshot")
+        return []
+    except Exception as e:
+        logger.warning(
+            "[ExecutorHealth] Failed to fetch executor runtime snapshot: %s", e
+        )
+        return []
+
+
 async def check_executor_containers_alive(
     task_id: int, subtasks: List[Subtask]
 ) -> bool:
@@ -111,32 +126,40 @@ async def check_executor_containers_alive(
     Returns:
         True if at least one container is alive
     """
+    checked_names: set[str] = set()
+
     for subtask in subtasks:
-        # Try subtask-specific executor name first
-        executor_name = generate_executor_name(task_id, subtask.id)
+        executor_name = (subtask.executor_name or "").strip()
+        if not executor_name or executor_name in checked_names:
+            continue
+
+        checked_names.add(executor_name)
         result = await check_executor_container_alive(executor_name)
-
         if result["alive"]:
             logger.debug(
-                f"[ExecutorHealth] Container alive: {executor_name}, "
-                f"task_id={task_id}, subtask_id={subtask.id}"
+                "[ExecutorHealth] Container alive: %s, task_id=%s, subtask_id=%s",
+                executor_name,
+                task_id,
+                subtask.id,
             )
             return True
 
-        # Fallback to task-level executor name
-        task_executor_name = generate_executor_name(task_id)
-        result = await check_executor_container_alive(task_executor_name)
+    containers = await get_running_executor_containers()
+    for container in containers:
+        if str(container.get("task_id")) != str(task_id):
+            continue
 
-        if result["alive"]:
-            logger.debug(
-                f"[ExecutorHealth] Container alive: {task_executor_name}, "
-                f"task_id={task_id}"
-            )
-            return True
+        logger.debug(
+            "[ExecutorHealth] Container alive via executor/load: task_id=%s, container=%s",
+            task_id,
+            container.get("container_name"),
+        )
+        return True
 
     logger.debug(
-        f"[ExecutorHealth] No alive containers for task_id={task_id}, "
-        f"checked {len(subtasks)} subtasks"
+        "[ExecutorHealth] No alive containers for task_id=%s, checked %s subtasks",
+        task_id,
+        len(subtasks),
     )
     return False
 

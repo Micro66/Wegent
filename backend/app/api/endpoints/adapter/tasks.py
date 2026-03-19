@@ -43,9 +43,9 @@ from app.schemas.task import (
     TaskUpdate,
 )
 from app.services.adapters.task_kinds import task_kinds_service
-from app.services.chat.stream_tracker import StreamInfo, stream_tracker
 from app.services.remote_workspace_service import remote_workspace_service
 from app.services.shared_task import shared_task_service
+from app.services.task_health import get_task_health_snapshot
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -347,161 +347,8 @@ async def get_task_health(
         - stale_duration_seconds: How long the task has been orphaned
         - recommendation: 'none', 'mark_failed', or 'wait'
     """
-    from app.models.subtask import Subtask
-    from app.services.chat.storage import session_manager
-    from app.services.execution.executor_health import (
-        check_executor_containers_alive,
-        get_subtask_shell_type,
-        is_chat_shell,
-        is_executor_shell,
-    )
-
-    # Get all subtasks for this task
-    subtasks = (
-        db.query(Subtask)
-        .filter(Subtask.task_id == task_id)
-        .order_by(Subtask.id.desc())
-        .all()
-    )
-
-    # Check for running subtasks in database
-    running_subtasks = [s for s in subtasks if s.status == "RUNNING"]
-    running_subtask_ids = {s.id for s in running_subtasks}
-
-    # Categorize running subtasks by shell type
-    chat_subtasks = []
-    executor_subtasks = []
-
-    for subtask in running_subtasks:
-        shell_type = get_subtask_shell_type(subtask, db)
-        if is_chat_shell(shell_type):
-            chat_subtasks.append(subtask)
-        elif is_executor_shell(shell_type):
-            executor_subtasks.append(subtask)
-
-    # Check Chat tasks: Use StreamTracker (Redis-based heartbeat)
-    active_streams = await stream_tracker.get_task_active_streams(task_id)
-
-    # Also check session_manager's task streaming status (legacy tracking)
-    # This is set when streaming starts and cleared when streaming ends
-    session_streaming_status = await session_manager.get_task_streaming_status(task_id)
-
-    has_active_chat_stream = (
-        len(active_streams) > 0 or session_streaming_status is not None
-    )
-
-    # Check Executor tasks: Query ExecutorManager for container status
-    executor_containers_alive = False
-    if executor_subtasks:
-        executor_containers_alive = await check_executor_containers_alive(
-            task_id, executor_subtasks
-        )
-
-    # A stream/execution is considered active if either:
-    # 1. Chat stream: StreamTracker has records or session_manager has streaming status
-    # 2. Executor tasks: Container is alive according to ExecutorManager
-    has_active_execution = has_active_chat_stream or executor_containers_alive
-
-    # Determine orphaned status:
-    # A task is orphaned if database shows RUNNING but no active execution
-    orphaned = len(running_subtasks) > 0 and not has_active_execution
-
-    logger.info(
-        f"[TaskHealth] task_id={task_id}, "
-        f"running_subtasks={len(running_subtasks)}, "
-        f"chat_subtasks={len(chat_subtasks)}, "
-        f"executor_subtasks={len(executor_subtasks)}, "
-        f"stream_tracker_streams={len(active_streams)}, "
-        f"session_streaming={session_streaming_status is not None}, "
-        f"executor_alive={executor_containers_alive}, "
-        f"orphaned={orphaned}"
-    )
-
-    # Calculate stale duration if orphaned
-    stale_duration_seconds = None
-    if orphaned and running_subtasks:
-        # Use the oldest running subtask's updated_at as stale start time
-        from datetime import datetime, timezone
-
-        now = datetime.now(timezone.utc)
-
-        def ensure_utc(dt):
-            """Ensure datetime is UTC aware.
-
-            Database stores naive datetimes (assumed to be UTC or local time).
-            We need to handle both cases correctly.
-            """
-            if dt.tzinfo is None:
-                # Naive datetime - assume it's in local timezone and convert to UTC
-                # For MySQL, timestamps are usually stored in the server timezone
-                # We'll treat naive datetimes as already being UTC to avoid conversion issues
-                return dt.replace(tzinfo=timezone.utc)
-            else:
-                # Already has timezone - convert to UTC
-                return dt.astimezone(timezone.utc)
-
-        oldest_update = min(
-            (ensure_utc(s.updated_at) for s in running_subtasks),
-            default=now,
-        )
-        stale_duration_seconds = int((now - oldest_update).total_seconds())
-
-    # Determine status
-    if orphaned:
-        status = "unhealthy"
-        recommendation = "mark_failed"
-    elif len(running_subtasks) > 0 and has_active_execution:
-        # Database shows RUNNING and there's active execution (stream or container)
-        status = "healthy"
-        recommendation = "none"
-    elif len(running_subtasks) == 0 and not has_active_execution:
-        # Task is not running in either DB or execution layer
-        status = "healthy"  # Not running is a valid healthy state
-        recommendation = "none"
-    else:
-        # Execution layer has activity but DB doesn't show RUNNING (inconsistent state)
-        status = "unknown"
-        recommendation = "wait"
-
-    # Build active streams response
-    active_streams_response = [
-        {
-            "subtask_id": s.subtask_id,
-            "shell_type": s.shell_type,
-            "started_at": s.started_at,
-            "last_heartbeat": s.last_heartbeat,
-            "heartbeat_age_seconds": s.heartbeat_age_seconds,
-            "executor_location": s.executor_location,
-        }
-        for s in active_streams
-    ]
-
-    # Get database status (use the most recent subtask status, or COMPLETED if no subtasks)
-    if subtasks:
-        # Prioritize RUNNING status if any subtask is running
-        database_status = (
-            "RUNNING"
-            if any(s.status == "RUNNING" for s in subtasks)
-            else subtasks[0].status
-        )
-    else:
-        database_status = "COMPLETED"
-
-    return {
-        "task_id": task_id,
-        "status": status,
-        "database_status": database_status,
-        "active_streams": active_streams_response,
-        "running_subtasks_count": len(running_subtasks),
-        "chat_subtasks_count": len(chat_subtasks),
-        "executor_subtasks_count": len(executor_subtasks),
-        "active_streams_count": len(active_streams),
-        "session_streaming_active": session_streaming_status is not None,
-        "executor_containers_alive": executor_containers_alive,
-        "orphaned": orphaned,
-        "stale_duration_seconds": stale_duration_seconds,
-        "recommendation": recommendation,
-    }
+    task_kinds_service.get_task_by_id(db=db, task_id=task_id, user_id=current_user.id)
+    return await get_task_health_snapshot(db, task_id)
 
 
 @router.post("/{task_id}/cleanup-orphaned")
@@ -523,6 +370,17 @@ async def cleanup_orphaned_task(
     """
     from app.models.subtask import Subtask
     from app.services.chat.storage.db import db_handler
+    from app.services.chat.stream_tracker import stream_tracker
+
+    task_kinds_service.get_task_by_id(db=db, task_id=task_id, user_id=current_user.id)
+    health_snapshot = await get_task_health_snapshot(db, task_id)
+    if not health_snapshot["orphaned"]:
+        return {
+            "task_id": task_id,
+            "cleaned": False,
+            "message": "Task is not orphaned",
+            "affected_subtasks": [],
+        }
 
     # Get running subtasks for this task
     running_subtasks = (
