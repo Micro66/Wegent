@@ -7,7 +7,10 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from app.services.execution.executor_health import check_executor_containers_alive
+from app.services.execution.executor_health import (
+    check_executor_containers_alive,
+    is_executor_shell,
+)
 
 
 @pytest.mark.asyncio
@@ -22,3 +25,9 @@ async def test_check_executor_containers_alive_uses_subtask_executor_name():
 
     assert alive is True
     mock_check.assert_awaited_once_with("wegent-task-user-abc123")
+
+
+def test_is_executor_shell_excludes_dify_external_api():
+    assert is_executor_shell("ClaudeCode") is True
+    assert is_executor_shell("Agno") is True
+    assert is_executor_shell("Dify") is False

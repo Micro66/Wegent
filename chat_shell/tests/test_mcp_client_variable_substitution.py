@@ -13,8 +13,45 @@ StdioConnection, StreamableHttpConnection) which are plain dicts,
 so we use dict-style access (conn["key"]) not attribute access.
 """
 
-from chat_shell.tools.mcp.client import build_connections
+import asyncio
+
+import pytest
+from langchain_core.tools.base import BaseTool
+
+from chat_shell.tools.mcp.client import build_connections, wrap_tool_with_protection
 from shared.models.execution import ExecutionRequest
+
+
+class SyncOnlyTool(BaseTool):
+    """Simple sync-only tool for MCP wrapper tests."""
+
+    name: str = "sync_only"
+    description: str = "sync-only test tool"
+
+    def _run(self, value: str, **_) -> str:
+        return f"sync:{value}"
+
+
+class TestWrapToolWithProtection:
+    """Tests for MCP tool protection wrapper behavior."""
+
+    def test_sync_run_remains_synchronous(self) -> None:
+        """Wrapped _run should still return a plain value on sync callers."""
+        tool = wrap_tool_with_protection(SyncOnlyTool())
+
+        result = tool._run("ok")
+
+        assert result == "sync:ok"
+        assert not asyncio.iscoroutine(result)
+
+    @pytest.mark.asyncio
+    async def test_async_run_can_wrap_sync_tool(self) -> None:
+        """Wrapped _arun should offload sync-only tools without blocking callers."""
+        tool = wrap_tool_with_protection(SyncOnlyTool())
+
+        result = await tool._arun("ok")
+
+        assert result == "sync:ok"
 
 
 class TestBuildConnectionsVariableSubstitution:

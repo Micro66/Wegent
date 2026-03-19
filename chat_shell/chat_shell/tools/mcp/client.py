@@ -20,6 +20,7 @@ Variable substitution:
 """
 
 import asyncio
+import concurrent.futures
 import inspect
 import logging
 from typing import Any, Optional
@@ -96,30 +97,25 @@ def wrap_tool_with_protection(
             return msg, None
         return msg
 
-    async def protected_run(*args, **kwargs):
-        """Asynchronous tool execution with protection."""
+    def protected_run(*args, **kwargs):
+        """Synchronous tool execution with timeout and exception protection."""
         try:
-            if original_run:
-                if run_accepts_config and "config" not in kwargs:
-                    kwargs["config"] = None
+            if not original_run:
+                return _format_error(
+                    f"Error: Tool {tool.name} has no synchronous implementation"
+                )
 
-                loop = asyncio.get_running_loop()
+            if run_accepts_config and "config" not in kwargs:
+                kwargs["config"] = None
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(original_run, *args, **kwargs)
                 try:
-                    result = await asyncio.wait_for(
-                        loop.run_in_executor(
-                            None, lambda: original_run(*args, **kwargs)
-                        ),
-                        timeout=timeout,
-                    )
-                    return result
-                except asyncio.TimeoutError:
+                    return future.result(timeout=timeout)
+                except concurrent.futures.TimeoutError:
                     error_msg = f"MCP tool '{tool.name}' timed out after {timeout}s"
                     logger.error("[MCP] %s", error_msg)
                     return _format_error(error_msg)
-
-            return _format_error(
-                f"Error: Tool {tool.name} has no synchronous implementation"
-            )
         except Exception as e:
             logger.exception("[MCP] MCP tool '%s' failed: %s", tool.name, e)
             return _format_error(f"MCP tool '{tool.name}' failed: {e!s}")
@@ -131,11 +127,23 @@ def wrap_tool_with_protection(
                 if arun_accepts_config and "config" not in kwargs:
                     kwargs["config"] = None
 
-                result = await asyncio.wait_for(
+                return await asyncio.wait_for(
                     original_arun(*args, **kwargs), timeout=timeout
                 )
-                return result
-            return _format_error(f"Error: Tool {tool.name} has no async implementation")
+
+            if original_run:
+                if run_accepts_config and "config" not in kwargs:
+                    kwargs["config"] = None
+
+                loop = asyncio.get_running_loop()
+                return await asyncio.wait_for(
+                    loop.run_in_executor(None, lambda: original_run(*args, **kwargs)),
+                    timeout=timeout,
+                )
+
+            return _format_error(
+                f"Error: Tool {tool.name} has no async or sync implementation"
+            )
         except asyncio.TimeoutError:
             error_msg = f"MCP tool '{tool.name}' timed out after {timeout}s"
             logger.error("[MCP] %s", error_msg)
@@ -146,8 +154,7 @@ def wrap_tool_with_protection(
 
     if original_run:
         tool._run = protected_run
-    if original_arun:
-        tool._arun = protected_arun
+    tool._arun = protected_arun
 
     return tool
 

@@ -5,7 +5,7 @@
 """
 Executor health check for container-based tasks.
 
-This module provides health checking for Executor tasks (ClaudeCode, Agno, Dify)
+This module provides health checking for container-backed executor tasks
 by querying ExecutorManager's container status via HTTP API.
 
 Key Design:
@@ -28,7 +28,7 @@ from app.services.chat.config.shell_checker import get_shell_type
 logger = logging.getLogger(__name__)
 
 # Executor shell types that run in containers
-EXECUTOR_SHELL_TYPES = {"ClaudeCode", "Agno", "Dify"}
+EXECUTOR_SHELL_TYPES = {"ClaudeCode", "Agno"}
 
 
 async def check_executor_container_alive(executor_name: str) -> dict:
@@ -221,7 +221,7 @@ def is_executor_shell(shell_type: str) -> bool:
         shell_type: Shell type string
 
     Returns:
-        True if it's ClaudeCode, Agno, or Dify
+        True if it's a container-backed executor shell
     """
     return shell_type in EXECUTOR_SHELL_TYPES
 

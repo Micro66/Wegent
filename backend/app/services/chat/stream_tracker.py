@@ -109,6 +109,10 @@ class StreamTracker:
         """Generate task count key."""
         return f"{STREAM_TASK_COUNT_PREFIX}:{task_id}:count"
 
+    def _get_stale_threshold_seconds(self) -> int:
+        """Get the configured heartbeat staleness threshold."""
+        return getattr(settings, "STREAM_STALE_THRESHOLD_SECONDS", 60)
+
     async def register_stream(
         self,
         task_id: int,
@@ -333,9 +337,7 @@ class StreamTracker:
 
                 streams = []
                 now = datetime.now(timezone.utc).timestamp()
-                stale_threshold = (
-                    3600  # 3600 seconds (60 minutes) without heartbeat = stale
-                )
+                stale_threshold = self._get_stale_threshold_seconds()
 
                 for key in keys:
                     data = await client.hgetall(key)
@@ -345,7 +347,7 @@ class StreamTracker:
                     last_heartbeat = float(data.get("last_heartbeat", 0))
                     heartbeat_age = now - last_heartbeat
 
-                    # Skip stale streams (no heartbeat for 60+ seconds)
+                    # Skip stale streams once heartbeat exceeds the configured threshold.
                     if heartbeat_age > stale_threshold:
                         logger.warning(
                             f"[StreamTracker] Skipping stale stream: "
@@ -392,9 +394,7 @@ class StreamTracker:
 
                 streams = []
                 now = datetime.now(timezone.utc).timestamp()
-                stale_threshold = (
-                    3600  # 3600 seconds (60 minutes) without heartbeat = stale
-                )
+                stale_threshold = self._get_stale_threshold_seconds()
 
                 for key in keys:
                     data = await client.hgetall(key)
@@ -404,7 +404,7 @@ class StreamTracker:
                     last_heartbeat = float(data.get("last_heartbeat", 0))
                     heartbeat_age = now - last_heartbeat
 
-                    # Skip stale streams (no heartbeat for 60+ seconds)
+                    # Skip stale streams once heartbeat exceeds the configured threshold.
                     if heartbeat_age > stale_threshold:
                         logger.warning(
                             f"[StreamTracker] Skipping stale stream: "

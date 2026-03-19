@@ -139,8 +139,8 @@ class Settings(BaseSettings):
     )
     # Stale stream threshold - how long without heartbeat before considering dead (seconds)
     STREAM_STALE_THRESHOLD_SECONDS: int = int(
-        os.getenv("STREAM_STALE_THRESHOLD_SECONDS", "3600")
-    )  # 1 hour
+        os.getenv("STREAM_STALE_THRESHOLD_SECONDS", "60")
+    )  # 1 minute
 
     # Task append expiration (hours)
     APPEND_CHAT_TASK_EXPIRE_HOURS: int = 2
