@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 def _ensure_utc(dt: datetime) -> datetime:
     """Return a UTC-aware datetime."""
     if dt.tzinfo is None:
-        return dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone().astimezone(timezone.utc)
     return dt.astimezone(timezone.utc)
 
 
@@ -51,9 +51,10 @@ async def get_task_health_snapshot(db: Session, task_id: int) -> dict[str, Any]:
 
     active_streams = await stream_tracker.get_task_active_streams(task_id)
     session_streaming_status = await session_manager.get_task_streaming_status(task_id)
-    has_active_chat_stream = (
-        bool(active_streams) or session_streaming_status is not None
-    )
+    # For chat tasks, task-level streaming status is the authoritative liveness
+    # signal. StreamTracker entries can briefly survive a process restart until
+    # their heartbeat ages out, so they remain diagnostic-only here.
+    has_active_chat_stream = session_streaming_status is not None
 
     executor_containers_alive = False
     if executor_subtasks:
@@ -85,7 +86,7 @@ async def get_task_health_snapshot(db: Session, task_id: int) -> dict[str, Any]:
             (_ensure_utc(subtask.updated_at) for subtask in running_subtasks),
             default=now,
         )
-        stale_duration_seconds = int((now - oldest_update).total_seconds())
+        stale_duration_seconds = max(0, int((now - oldest_update).total_seconds()))
 
     if orphaned:
         status = "unhealthy"

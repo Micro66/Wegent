@@ -22,6 +22,7 @@ import { TaskDetailSubtask } from '@/types/api'
 import { useToast } from '@/hooks/use-toast'
 import { useTaskContext } from '@/features/tasks/contexts/taskContext'
 import { taskStateManager } from '../state'
+import { buildTaskHealthInterruptedMessage } from '../utils/task-health-message'
 
 // Default configuration value
 const DEFAULT_HEALTH_CHECK_INTERVAL_MS = 30000
@@ -131,7 +132,7 @@ export function useTaskHealthCheck(
               runningSubtasks.forEach(subtask => {
                 machine.handleChatError(
                   subtask.id,
-                  `任务已异常终止（已死亡 ${formatDuration(health.stale_duration_seconds)}）`
+                  buildTaskHealthInterruptedMessage(formatDuration(health.stale_duration_seconds))
                 )
               })
             }
@@ -139,7 +140,9 @@ export function useTaskHealthCheck(
             // Show toast notification
             toast({
               title: '检测到任务异常',
-              description: `任务已异常终止（已死亡 ${formatDuration(health.stale_duration_seconds)}），已自动清理状态`,
+              description: `${buildTaskHealthInterruptedMessage(
+                formatDuration(health.stale_duration_seconds)
+              )}，已自动清理状态`,
               variant: 'default',
             })
 

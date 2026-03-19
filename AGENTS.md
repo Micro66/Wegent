@@ -135,6 +135,21 @@ black . && isort .
 - Descriptive names, docstrings for public functions/classes
 - Extract magic numbers to constants
 
+### Redis / MySQL Usage Rules
+
+⚠️ **Redis usage rules**
+
+- ❌ **Do not use `KEYS` or `SCAN` / `SCAN_ITER` commands** in application code
+- ✅ Always design explicit key indexes so reads are based on direct lookup (`GET`, `HGETALL`, `SMEMBERS`, `ZRANGE`, etc.)
+- ✅ If a query pattern cannot be served without scanning Redis keyspace, refactor the key design first instead of adding a scan
+
+⚠️ **MySQL usage rules**
+
+- ❌ **Do not use `JOIN` queries**
+- ✅ Prefer simple single-table queries and split multi-table logic into multiple explicit queries in application code
+- ⚠️ **Before writing any SQL or introducing new SQL query logic, you must ask the user first**
+- ✅ Prefer existing SQLAlchemy ORM patterns over raw SQL strings whenever possible
+
 ### TypeScript/React (Frontend)
 
 **Standards:** TypeScript strict mode, functional components, Prettier, ESLint, single quotes, no semicolons
@@ -588,4 +603,3 @@ cd backend && uv run alembic revision --autogenerate -m "msg" && uv run alembic 
 ```
 
 **Ports:** 3000 (frontend), 8000 (backend), 8001 (chat shell), 3306 (MySQL), 6379 (Redis)
-

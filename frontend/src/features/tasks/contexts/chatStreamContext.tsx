@@ -27,6 +27,7 @@ import { useSocket, ChatEventHandlers, SkillEventHandlers } from '@/contexts/Soc
 import { usePageVisibility } from '@/hooks/usePageVisibility'
 import { useHealthCheckBeforeStop } from '../hooks'
 import { taskApis } from '@/apis/tasks'
+import { buildTaskHealthInterruptedMessage } from '../utils/task-health-message'
 import {
   ChatSendPayload,
   ChatStartPayload,
@@ -848,7 +849,9 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
           if (subtaskId) {
             machine.handleChatError(
               subtaskId,
-              `任务已异常终止（已死亡 ${formatDuration(healthCheck.health.stale_duration_seconds)}）`
+              buildTaskHealthInterruptedMessage(
+                formatDuration(healthCheck.health.stale_duration_seconds)
+              )
             )
           }
         } catch (error) {

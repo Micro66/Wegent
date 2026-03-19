@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -189,3 +189,77 @@ def test_cleanup_orphaned_endpoint_denies_non_member_access(
 
     assert response.status_code == 404
     assert response.json()["detail"] == "Task not found"
+
+
+def test_task_health_marks_chat_task_orphaned_when_session_status_missing(
+    test_client: TestClient,
+    test_db: Session,
+    test_user: User,
+    test_token: str,
+):
+    task = _create_task(test_db, test_user)
+    subtask = _create_running_subtask(test_db, test_user, task)
+
+    with (
+        patch(
+            "app.services.task_health.stream_tracker.get_task_active_streams",
+            new=AsyncMock(
+                return_value=[
+                    SimpleNamespace(
+                        task_id=task.id,
+                        subtask_id=subtask.id,
+                        shell_type="Chat",
+                        started_at=datetime.now().isoformat(),
+                        last_heartbeat=datetime.now().timestamp(),
+                        heartbeat_age_seconds=5.0,
+                        executor_location="chat_shell",
+                    )
+                ]
+            ),
+        ),
+        patch(
+            "app.services.chat.storage.session_manager.get_task_streaming_status",
+            new=AsyncMock(return_value=None),
+        ),
+    ):
+        response = test_client.get(
+            f"/api/tasks/{task.id}/health",
+            headers=_auth_header(test_token),
+        )
+
+    assert response.status_code == 200
+    assert response.json()["active_streams_count"] == 1
+    assert response.json()["orphaned"] is True
+    assert response.json()["recommendation"] == "mark_failed"
+
+
+def test_task_health_clamps_negative_stale_duration(
+    test_client: TestClient,
+    test_db: Session,
+    test_user: User,
+    test_token: str,
+):
+    task = _create_task(test_db, test_user)
+    subtask = _create_running_subtask(test_db, test_user, task)
+    subtask.updated_at = datetime.now() + timedelta(hours=8)
+    test_db.add(subtask)
+    test_db.commit()
+
+    with (
+        patch(
+            "app.services.task_health.stream_tracker.get_task_active_streams",
+            new=AsyncMock(return_value=[]),
+        ),
+        patch(
+            "app.services.chat.storage.session_manager.get_task_streaming_status",
+            new=AsyncMock(return_value=None),
+        ),
+    ):
+        response = test_client.get(
+            f"/api/tasks/{task.id}/health",
+            headers=_auth_header(test_token),
+        )
+
+    assert response.status_code == 200
+    assert response.json()["orphaned"] is True
+    assert response.json()["stale_duration_seconds"] == 0

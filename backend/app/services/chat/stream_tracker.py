@@ -13,7 +13,8 @@ real state verification (not just database status). It tracks:
 
 Key Design:
 - Uses Redis Hash for stream metadata with TTL
-- Uses Redis Sorted Set for stream list (by start time)
+- Uses Redis Sorted Set for the global stream list
+- Uses Redis Set for per-task stream membership
 - Heartbeat updates keep stream alive
 - Automatic cleanup via Redis TTL
 
@@ -26,8 +27,8 @@ Redis Key Design:
     # Fields: task_id, subtask_id, shell_type, started_at,
     #         last_heartbeat, executor_location
 
-    # Task-level stream count (String with TTL)
-    active_streams:task:{task_id}:count
+    # Task-level stream membership (Set with TTL)
+    active_streams:task:{task_id}:streams
 """
 
 import logging
@@ -35,7 +36,6 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import List, Optional
 
-import orjson
 from redis.asyncio import Redis
 
 from app.core.config import settings
@@ -45,11 +45,11 @@ logger = logging.getLogger(__name__)
 # Redis key prefixes
 STREAM_LIST_KEY = "active_streams:list"
 STREAM_META_PREFIX = "active_streams:meta"
-STREAM_TASK_COUNT_PREFIX = "active_streams:task"
+STREAM_TASK_PREFIX = "active_streams:task"
 
 # Default TTL values (from config or defaults)
 DEFAULT_STREAM_META_TTL = getattr(settings, "STREAM_META_TTL_SECONDS", 3600)  # 1 hour
-DEFAULT_TASK_COUNT_TTL = getattr(settings, "STREAM_TASK_COUNT_TTL_SECONDS", 3600)
+DEFAULT_TASK_INDEX_TTL = getattr(settings, "STREAM_TASK_COUNT_TTL_SECONDS", 3600)
 
 
 @dataclass
@@ -105,9 +105,9 @@ class StreamTracker:
         """Generate metadata key for a stream."""
         return f"{STREAM_META_PREFIX}:{task_id}:{subtask_id}"
 
-    def _task_count_key(self, task_id: int) -> str:
-        """Generate task count key."""
-        return f"{STREAM_TASK_COUNT_PREFIX}:{task_id}:count"
+    def _task_streams_key(self, task_id: int) -> str:
+        """Generate task membership key."""
+        return f"{STREAM_TASK_PREFIX}:{task_id}:streams"
 
     def _get_stale_threshold_seconds(self) -> int:
         """Get the configured heartbeat staleness threshold."""
@@ -120,7 +120,7 @@ class StreamTracker:
         shell_type: str,
         executor_location: str = "chat_shell",
         meta_ttl: int = DEFAULT_STREAM_META_TTL,
-        count_ttl: int = DEFAULT_TASK_COUNT_TTL,
+        count_ttl: int = DEFAULT_TASK_INDEX_TTL,
     ) -> bool:
         """Register a new active stream.
 
@@ -130,7 +130,7 @@ class StreamTracker:
             shell_type: Shell type (Chat, ClaudeCode, Agno, Dify)
             executor_location: Where the executor is running (chat_shell, executor_manager, inprocess)
             meta_ttl: TTL for stream metadata in seconds
-            count_ttl: TTL for task count in seconds
+            count_ttl: TTL for task membership index in seconds
 
         Returns:
             True if registration succeeded
@@ -160,15 +160,15 @@ class StreamTracker:
                 await client.hset(meta_key, mapping=meta_data)
                 await client.expire(meta_key, meta_ttl)
 
-                # Update task-level stream count
-                count_key = self._task_count_key(task_id)
-                count = await client.incr(count_key)
-                await client.expire(count_key, count_ttl)
+                # Update task-level stream membership index
+                task_streams_key = self._task_streams_key(task_id)
+                await client.sadd(task_streams_key, str(subtask_id))
+                await client.expire(task_streams_key, count_ttl)
 
                 logger.info(
                     f"[StreamTracker] Registered stream: task_id={task_id}, "
                     f"subtask_id={subtask_id}, shell_type={shell_type}, "
-                    f"executor_location={executor_location}, count={count}"
+                    f"executor_location={executor_location}"
                 )
                 return True
             finally:
@@ -199,15 +199,15 @@ class StreamTracker:
                 meta_key = self._meta_key(task_id, subtask_id)
                 await client.delete(meta_key)
 
-                # Decrement task-level count (or delete if 0)
-                count_key = self._task_count_key(task_id)
-                count = await client.decr(count_key)
-                if count <= 0:
-                    await client.delete(count_key)
+                # Remove from task-level stream membership index
+                task_streams_key = self._task_streams_key(task_id)
+                await client.srem(task_streams_key, str(subtask_id))
+                if await client.scard(task_streams_key) <= 0:
+                    await client.delete(task_streams_key)
 
                 logger.info(
                     f"[StreamTracker] Unregistered stream: task_id={task_id}, "
-                    f"subtask_id={subtask_id}, remaining_count={max(0, count)}"
+                    f"subtask_id={subtask_id}"
                 )
                 return True
             finally:
@@ -247,6 +247,7 @@ class StreamTracker:
                 timestamp = datetime.now(timezone.utc).timestamp()
                 await client.hset(meta_key, "last_heartbeat", str(timestamp))
                 await client.expire(meta_key, ttl)
+                await client.expire(self._task_streams_key(task_id), ttl)
 
                 return True
             finally:
@@ -326,22 +327,22 @@ class StreamTracker:
         try:
             client = await self._get_client()
             try:
-                # Scan for all metadata keys for this task
-                pattern = f"{STREAM_META_PREFIX}:{task_id}:*"
-                keys = []
-                async for key in client.scan_iter(match=pattern):
-                    keys.append(key)
-
-                if not keys:
+                subtask_ids = await client.smembers(self._task_streams_key(task_id))
+                if not subtask_ids:
                     return []
 
                 streams = []
                 now = datetime.now(timezone.utc).timestamp()
                 stale_threshold = self._get_stale_threshold_seconds()
 
-                for key in keys:
+                for subtask_id in subtask_ids:
+                    key = self._meta_key(task_id, int(subtask_id))
                     data = await client.hgetall(key)
                     if not data:
+                        await client.srem(
+                            self._task_streams_key(task_id), str(subtask_id)
+                        )
+                        await client.zrem(STREAM_LIST_KEY, f"{task_id}:{subtask_id}")
                         continue
 
                     last_heartbeat = float(data.get("last_heartbeat", 0))
@@ -383,22 +384,30 @@ class StreamTracker:
         try:
             client = await self._get_client()
             try:
-                # Scan for all metadata keys
-                pattern = f"{STREAM_META_PREFIX}:*"
-                keys = []
-                async for key in client.scan_iter(match=pattern):
-                    keys.append(key)
-
-                if not keys:
+                stream_keys = await client.zrange(STREAM_LIST_KEY, 0, -1)
+                if not stream_keys:
                     return []
 
                 streams = []
                 now = datetime.now(timezone.utc).timestamp()
                 stale_threshold = self._get_stale_threshold_seconds()
 
-                for key in keys:
+                for stream_key in stream_keys:
+                    try:
+                        task_id_str, subtask_id_str = str(stream_key).split(":", 1)
+                        task_id = int(task_id_str)
+                        subtask_id = int(subtask_id_str)
+                    except ValueError:
+                        await client.zrem(STREAM_LIST_KEY, stream_key)
+                        continue
+
+                    key = self._meta_key(task_id, subtask_id)
                     data = await client.hgetall(key)
                     if not data:
+                        await client.zrem(STREAM_LIST_KEY, stream_key)
+                        await client.srem(
+                            self._task_streams_key(task_id), str(subtask_id)
+                        )
                         continue
 
                     last_heartbeat = float(data.get("last_heartbeat", 0))
