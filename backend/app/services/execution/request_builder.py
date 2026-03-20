@@ -13,6 +13,7 @@ providing complete Bot, Model, Ghost, Shell, and Skill resolution.
 import logging
 import urllib.request
 from typing import Any, List, Optional, Union
+from urllib.parse import urlparse
 
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -1798,13 +1799,21 @@ class TaskRequestBuilder:
         # Find matching git_info entry by domain
         matched_git_info = None
         if git_domain:
+            normalized_target_domain = self._normalize_git_domain(git_domain)
             for git_info in git_info_list:
-                if git_info.get("git_domain") == git_domain:
+                candidate_domain = git_info.get("git_domain")
+                normalized_candidate_domain = self._normalize_git_domain(
+                    candidate_domain
+                )
+                if (
+                    normalized_target_domain
+                    and normalized_candidate_domain == normalized_target_domain
+                ):
                     matched_git_info = git_info
                     break
 
-        # Fallback to first entry if no domain match
-        if not matched_git_info and git_info_list:
+        # Fallback to first entry only when no target domain was specified
+        if not matched_git_info and not git_domain and git_info_list:
             matched_git_info = git_info_list[0]
 
         if matched_git_info:
@@ -1815,6 +1824,33 @@ class TaskRequestBuilder:
             user_info["git_email"] = matched_git_info.get("git_email")
 
         return user_info
+
+    @staticmethod
+    def _normalize_git_domain(git_domain: str | None) -> str | None:
+        """Normalize git domain for account matching."""
+        if not git_domain:
+            return None
+
+        normalized = git_domain.strip().lower().rstrip("/")
+        if not normalized:
+            return None
+
+        if normalized.startswith("git@"):
+            without_prefix = normalized[4:]
+            if ":" in without_prefix:
+                return without_prefix.split(":", 1)[0]
+            return without_prefix
+
+        if "://" not in normalized:
+            normalized = f"https://{normalized}"
+
+        parsed = urlparse(normalized)
+        if parsed.hostname:
+            if parsed.port:
+                return f"{parsed.hostname}:{parsed.port}"
+            return parsed.hostname
+
+        return None
 
     def _build_workspace(self, task: TaskResource) -> dict:
         """Build workspace configuration.

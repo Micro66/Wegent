@@ -8,6 +8,7 @@ Contains utility functions for status conversion, parsing, and validation.
 """
 
 from typing import Any, Dict, List, Optional, Union
+from urllib.parse import urlparse
 
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
@@ -98,12 +99,15 @@ def parse_wegent_tools(tools: Optional[List[WegentTool]]) -> Dict[str, Any]:
                         status_code=status.HTTP_400_BAD_REQUEST,
                         detail="workspace is required when type='wegent_code_bot'",
                     )
+                normalized_git_url = _normalize_workspace_git_url(
+                    tool.workspace.git_url
+                )
                 result["workspace"] = {
-                    "git_url": tool.workspace.git_url,
+                    "git_url": normalized_git_url,
                     "branch": tool.workspace.branch,
                     "git_repo": tool.workspace.git_repo
-                    or _extract_repo_from_url(tool.workspace.git_url),
-                    "git_domain": _extract_domain_from_url(tool.workspace.git_url),
+                    or _extract_repo_from_url(normalized_git_url),
+                    "git_domain": _extract_domain_from_url(normalized_git_url),
                 }
             elif tool.type == "mcp" and tool.mcp_servers:
                 # mcp_servers is List[Dict[str, Any]]
@@ -168,6 +172,37 @@ def _extract_repo_from_url(git_url: str) -> Optional[str]:
             return path
 
     return None
+
+
+def _normalize_workspace_git_url(git_url: str) -> str:
+    """
+    Normalize workspace git URL for known non-clone URL formats.
+
+    Currently supports converting Gerrit admin project page URLs to clone URLs:
+    http(s)://host/#/admin/projects/<project_path>
+      -> http(s)://host/<project_path>.git
+    """
+    if not git_url:
+        return git_url
+
+    trimmed = git_url.strip()
+    marker = "#/admin/projects/"
+    if marker not in trimmed:
+        return trimmed
+
+    base_part, project_part = trimmed.split(marker, 1)
+    project_path = project_part.split("?", 1)[0].split("#", 1)[0].strip("/")
+    if not project_path:
+        return trimmed
+
+    parsed = urlparse(base_part)
+    if not parsed.scheme or not parsed.netloc:
+        return trimmed
+
+    if not project_path.endswith(".git"):
+        project_path = f"{project_path}.git"
+
+    return f"{parsed.scheme}://{parsed.netloc}/{project_path}"
 
 
 def _extract_domain_from_url(git_url: str) -> Optional[str]:

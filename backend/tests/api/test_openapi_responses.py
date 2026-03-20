@@ -879,6 +879,33 @@ class TestOpenAPIResponsesHelpers:
         result = parse_wegent_tools(tools)
         assert result["enable_chat_bot"] is True
 
+    def test_parse_wegent_tools_code_bot_normalizes_gerrit_admin_url(self):
+        """Test parsing code bot tool normalizes Gerrit admin project URL to clone URL."""
+        from app.schemas.openapi_response import WegentTool, WorkspaceConfig
+        from app.services.openapi.helpers import parse_wegent_tools
+
+        tools = [
+            WegentTool(
+                type="wegent_code_bot",
+                workspace=WorkspaceConfig(
+                    git_url="http://gerrit.client.weibo.cn/#/admin/projects/Weibo-CMW/AndroidPhone/Workset/Weibo_dev_aiagent",
+                    branch="master",
+                ),
+            )
+        ]
+
+        result = parse_wegent_tools(tools)
+        assert result["workspace"] is not None
+        assert (
+            result["workspace"]["git_url"]
+            == "http://gerrit.client.weibo.cn/Weibo-CMW/AndroidPhone/Workset/Weibo_dev_aiagent.git"
+        )
+        assert (
+            result["workspace"]["git_repo"]
+            == "Weibo-CMW/AndroidPhone/Workset/Weibo_dev_aiagent"
+        )
+        assert result["workspace"]["git_domain"] == "gerrit.client.weibo.cn"
+
     def test_wegent_status_to_openai_status(self):
         """Test status conversion from Wegent to OpenAI format."""
         from app.services.openapi.helpers import wegent_status_to_openai_status
