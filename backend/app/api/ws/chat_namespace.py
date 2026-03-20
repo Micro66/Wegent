@@ -385,6 +385,8 @@ class ChatNamespace(socketio.AsyncNamespace):
                     "offset": offset,
                     "cached_content": cached_content or "",
                     "blocks": blocks,
+                    "started_at": streaming_info.get("started_at"),
+                    "last_activity_at": streaming_info.get("last_activity_at"),
                 },
                 "subtasks": subtasks_dict,
             }
