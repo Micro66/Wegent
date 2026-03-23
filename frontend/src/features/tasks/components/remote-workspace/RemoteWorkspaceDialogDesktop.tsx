@@ -445,7 +445,10 @@ export function RemoteWorkspaceDialogDesktop({
         open={isPreviewDialogOpen && Boolean(previewEntry)}
         onOpenChange={onPreviewDialogOpenChange}
       >
-        <DialogContent className="!flex !h-[90vh] !w-[96vw] !max-w-[1400px] !flex-col gap-0 overflow-hidden p-0">
+        <DialogContent
+          className="!flex !h-[90vh] !w-[96vw] !max-w-[1400px] !flex-col gap-0 overflow-hidden p-0"
+          aria-label="Preview"
+        >
           {previewEntry && (
             <>
               {/* Header - Same style as FilePreviewPage */}
@@ -456,7 +459,9 @@ export function RemoteWorkspaceDialogDesktop({
                     <h1 className="font-medium text-text-primary truncate max-w-[200px] sm:max-w-[300px] md:max-w-[500px]">
                       {previewEntry.name}
                     </h1>
-                    <p className="text-xs text-text-secondary">{formatSize(previewEntry.size)}</p>
+                    <p className="text-xs text-text-secondary truncate max-w-[200px] sm:max-w-[300px] md:max-w-[500px]">
+                      {previewEntry.path}
+                    </p>
                   </div>
                 </div>
 
