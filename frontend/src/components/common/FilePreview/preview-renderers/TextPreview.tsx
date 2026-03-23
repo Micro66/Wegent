@@ -4,8 +4,34 @@
 
 'use client'
 
-import React from 'react'
-import { isCodeFile } from '../utils'
+import React, { useEffect, useRef } from 'react'
+import Prism from 'prismjs'
+import { getPrismLanguage } from '../utils'
+import { useTheme } from '@/features/theme/ThemeProvider'
+
+// Import Prism core styles
+import 'prismjs/themes/prism.css'
+
+// Import common languages
+import 'prismjs/components/prism-javascript'
+import 'prismjs/components/prism-jsx'
+import 'prismjs/components/prism-typescript'
+import 'prismjs/components/prism-tsx'
+import 'prismjs/components/prism-python'
+import 'prismjs/components/prism-java'
+import 'prismjs/components/prism-go'
+import 'prismjs/components/prism-rust'
+import 'prismjs/components/prism-c'
+import 'prismjs/components/prism-cpp'
+import 'prismjs/components/prism-css'
+import 'prismjs/components/prism-scss'
+import 'prismjs/components/prism-markup'
+import 'prismjs/components/prism-json'
+import 'prismjs/components/prism-yaml'
+import 'prismjs/components/prism-bash'
+import 'prismjs/components/prism-powershell'
+import 'prismjs/components/prism-sql'
+import 'prismjs/components/prism-markdown'
 
 interface TextPreviewProps {
   content: string
@@ -13,20 +39,114 @@ interface TextPreviewProps {
 }
 
 export function TextPreview({ content, filename }: TextPreviewProps) {
-  const isCode = isCodeFile(filename)
+  const language = getPrismLanguage(filename)
+  const codeRef = useRef<HTMLElement>(null)
+  const { theme } = useTheme()
+  const isDarkMode = theme === 'dark'
+
+  // Apply syntax highlighting for code files
+  useEffect(() => {
+    if (codeRef.current && content && language !== 'text') {
+      Prism.highlightElement(codeRef.current)
+    }
+  }, [content, language, isDarkMode])
+
+  // Split content into lines for rendering with line numbers
+  const lines = content.split('\n')
+
+  // Theme colors based on dark/light mode
+  const themeColors = isDarkMode
+    ? {
+        bg: '#2d2d2d',
+        lineNumberBg: '#1e1e1e',
+        lineNumberColor: '#858585',
+        hoverBg: '#3a3d3e',
+        borderColor: '#444',
+        textColor: '#ccc',
+      }
+    : {
+        bg: '#f5f2f0',
+        lineNumberBg: '#e8e5e3',
+        lineNumberColor: '#999',
+        hoverBg: '#e0ddd9',
+        borderColor: '#ccc',
+        textColor: '#333',
+      }
 
   return (
-    <div className="flex flex-col h-full bg-white dark:bg-gray-900">
-      <div className="flex-1 overflow-auto p-4">
-        {isCode ? (
-          <pre className="font-mono text-sm text-text-primary dark:text-gray-200 whitespace-pre-wrap break-all">
-            {content}
-          </pre>
-        ) : (
-          <div className="text-text-primary dark:text-gray-200 whitespace-pre-wrap break-all leading-relaxed">
-            {content}
-          </div>
-        )}
+    <div className="flex flex-col h-full" style={{ backgroundColor: themeColors.bg }}>
+      <div className="flex-1 overflow-auto">
+        <table className="w-full border-collapse">
+          <tbody>
+            {lines.map((line, index) => (
+              <tr
+                key={index}
+                className="transition-colors"
+                style={{ backgroundColor: 'transparent' }}
+                onMouseEnter={e => {
+                  e.currentTarget.style.backgroundColor = themeColors.hoverBg
+                }}
+                onMouseLeave={e => {
+                  e.currentTarget.style.backgroundColor = 'transparent'
+                }}
+              >
+                {/* Line number cell */}
+                <td
+                  className="text-right select-none font-mono text-sm py-0 px-4 border-r"
+                  style={{
+                    minWidth: '3.5rem',
+                    backgroundColor: themeColors.lineNumberBg,
+                    color: themeColors.lineNumberColor,
+                    borderColor: themeColors.borderColor,
+                  }}
+                >
+                  {index + 1}
+                </td>
+                {/* Code cell */}
+                <td className="w-full py-0 px-4">
+                  <pre
+                    className="m-0 p-0 bg-transparent font-mono text-sm"
+                    style={{
+                      margin: 0,
+                      padding: 0,
+                      background: 'transparent',
+                      lineHeight: '1.5',
+                    }}
+                  >
+                    {index === 0 ? (
+                      <code
+                        ref={codeRef}
+                        className={language !== 'text' ? `language-${language}` : undefined}
+                        style={{
+                          background: 'transparent',
+                          textShadow: 'none',
+                          padding: 0,
+                          margin: 0,
+                          color: language === 'text' ? themeColors.textColor : undefined,
+                        }}
+                      >
+                        {line || ' '}
+                      </code>
+                    ) : (
+                      <code
+                        className={language !== 'text' ? `language-${language}` : undefined}
+                        style={{
+                          background: 'transparent',
+                          textShadow: 'none',
+                          padding: 0,
+                          margin: 0,
+                          color: language === 'text' ? themeColors.textColor : undefined,
+                        }}
+                      >
+                        {line || ' '}
+                      </code>
+                    )}
+                  </pre>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
     </div>
   )

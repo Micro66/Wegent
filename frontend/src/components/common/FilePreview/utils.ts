@@ -68,3 +68,44 @@ export function isCodeFile(filename: string): boolean {
     filename
   )
 }
+
+/**
+ * Get Prism.js language identifier from filename
+ */
+export function getPrismLanguage(filename: string): string {
+  const ext = filename.toLowerCase().split('.').pop() || ''
+
+  const languageMap: Record<string, string> = {
+    js: 'javascript',
+    jsx: 'jsx',
+    ts: 'typescript',
+    tsx: 'tsx',
+    py: 'python',
+    java: 'java',
+    go: 'go',
+    rs: 'rust',
+    cpp: 'cpp',
+    c: 'c',
+    h: 'c',
+    hpp: 'cpp',
+    css: 'css',
+    scss: 'scss',
+    less: 'less',
+    html: 'html',
+    htm: 'html',
+    xml: 'xml',
+    json: 'json',
+    yaml: 'yaml',
+    yml: 'yaml',
+    sh: 'bash',
+    bash: 'bash',
+    zsh: 'bash',
+    ps1: 'powershell',
+    sql: 'sql',
+    md: 'markdown',
+    txt: 'text',
+    log: 'text',
+  }
+
+  return languageMap[ext] || 'text'
+}
