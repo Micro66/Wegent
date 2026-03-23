@@ -448,6 +448,7 @@ export function RemoteWorkspaceDialogDesktop({
         <DialogContent
           className="!flex !h-[90vh] !w-[96vw] !max-w-[1400px] !flex-col gap-0 overflow-hidden p-0"
           aria-label="Preview"
+          hideCloseButton
         >
           {previewEntry && (
             <>
