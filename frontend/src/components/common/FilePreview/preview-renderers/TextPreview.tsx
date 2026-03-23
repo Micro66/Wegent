@@ -9,8 +9,8 @@ import Prism from 'prismjs'
 import { getPrismLanguage } from '../utils'
 import { useTheme } from '@/features/theme/ThemeProvider'
 
-// Import Prism core styles
-import 'prismjs/themes/prism.css'
+// Import Prism core styles - use tomorrow theme (VS Code like dark theme)
+import 'prismjs/themes/prism-tomorrow.css'
 
 // Import common languages
 import 'prismjs/components/prism-javascript'
@@ -54,15 +54,15 @@ export function TextPreview({ content, filename }: TextPreviewProps) {
   // Split content into lines for rendering with line numbers
   const lines = content.split('\n')
 
-  // Theme colors based on dark/light mode
+  // Theme colors based on dark/light mode - VS Code Dark+ theme
   const themeColors = isDarkMode
     ? {
-        bg: '#2d2d2d',
-        lineNumberBg: '#1e1e1e',
-        lineNumberColor: '#858585',
-        hoverBg: '#3a3d3e',
-        borderColor: '#444',
-        textColor: '#ccc',
+        bg: '#1e1e1e', // VS Code editor background
+        lineNumberBg: '#1e1e1e', // Same as editor
+        lineNumberColor: '#858585', // VS Code line numbers
+        hoverBg: '#2a2d2e', // VS Code hover highlight
+        borderColor: '#333', // Subtle border
+        textColor: '#d4d4d4', // VS Code default text
       }
     : {
         bg: '#f5f2f0',
