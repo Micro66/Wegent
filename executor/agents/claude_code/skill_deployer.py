@@ -50,6 +50,13 @@ def download_and_deploy_skills(
 
         logger.info(f"Found {len(skills)} skills to deploy: {skills}")
 
+        # Get skill_refs from task_data for precise skill identification
+        skill_refs = task_data.skill_refs or {}
+        if skill_refs:
+            logger.info(
+                f"Using skill_refs for precise identification: {list(skill_refs.keys())}"
+            )
+
         # Get skills directory from strategy
         skills_dir = mode_strategy.get_skills_directory(config_dir=config_dir)
 
@@ -75,6 +82,7 @@ def download_and_deploy_skills(
             skills=skills,
             clear_cache=deployment_options["clear_cache"],
             skip_existing=deployment_options["skip_existing"],
+            skill_refs=skill_refs,
         )
 
         logger.info(

@@ -271,6 +271,7 @@ class SkillDownloader:
         skills: List[str],
         clear_cache: bool = True,
         skip_existing: bool = False,
+        skill_refs: Optional[Dict[str, Dict[str, Any]]] = None,
     ) -> SkillDownloadResult:
         """Download and deploy skills to skills directory.
 
@@ -278,6 +279,8 @@ class SkillDownloader:
             skills: List of skill names to download
             clear_cache: If True, clear skills directory before download (Docker mode)
             skip_existing: If True, skip skills that already exist (Local mode)
+            skill_refs: Optional mapping from skill name to skill metadata (skill_id, namespace, is_public)
+                       If provided, skills will be downloaded by skill_id for precise identification.
 
         Returns:
             SkillDownloadResult with success count and directory path
@@ -315,7 +318,9 @@ class SkillDownloader:
         # Download each skill
         success_count = 0
         for skill_name in skills_to_download:
-            if self._download_single_skill(skill_name):
+            # Get skill_ref if available for precise identification
+            skill_ref = skill_refs.get(skill_name) if skill_refs else None
+            if self._download_single_skill(skill_name, skill_ref):
                 success_count += 1
 
         if success_count > 0:
@@ -355,11 +360,18 @@ class SkillDownloader:
                         f"[SkillDownloader] Removed skill for replacement: {skill_name}"
                     )
 
-    def _download_single_skill(self, skill_name: str) -> bool:
+    def _download_single_skill(
+        self, skill_name: str, skill_ref: Optional[Dict[str, Any]] = None
+    ) -> bool:
         """Download and extract a single skill.
 
         Args:
             skill_name: Name of the skill to download
+            skill_ref: Optional skill reference metadata with keys:
+                      - skill_id: int - the skill's Kind.id
+                      - namespace: str - the skill's namespace
+                      - is_public: bool - whether this is a public skill
+                      If provided, skill will be downloaded directly by skill_id.
 
         Returns:
             True if successful, False otherwise
@@ -367,28 +379,50 @@ class SkillDownloader:
         try:
             logger.info(f"[SkillDownloader] Downloading skill: {skill_name}")
 
-            # Query skill by name
-            # Include task_id for task-based authorization (enables shared team scenarios)
-            query_path = f"/api/v1/kinds/skills?name={skill_name}&namespace={self.team_namespace}"
-            if self.task_id:
-                query_path += f"&task_id={self.task_id}"
-            response = self.client.get(query_path, timeout=self.QUERY_TIMEOUT)
+            skill_id = None
+            skill_namespace = self.team_namespace
 
-            if not response:
-                logger.error(f"[SkillDownloader] Failed to query skill '{skill_name}'")
-                return False
+            # If skill_ref is provided, use skill_id for precise identification
+            if skill_ref:
+                skill_id = skill_ref.get("skill_id")
+                skill_namespace = skill_ref.get("namespace", self.team_namespace)
+                logger.info(
+                    f"[SkillDownloader] Using skill_ref for precise identification: "
+                    f"skill_id={skill_id}, namespace={skill_namespace}"
+                )
 
-            skills_data = response.json()
-            skill_items = skills_data.get("items", [])
+            # If no skill_id from skill_ref, fall back to name-based query
+            if not skill_id:
+                logger.info(
+                    f"[SkillDownloader] No skill_ref provided, falling back to name-based query"
+                )
 
-            if not skill_items:
-                logger.error(f"[SkillDownloader] Skill '{skill_name}' not found")
-                return False
+                # Query skill by name
+                # Include task_id for task-based authorization (enables shared team scenarios)
+                query_path = f"/api/v1/kinds/skills?name={skill_name}&namespace={self.team_namespace}"
+                if self.task_id:
+                    query_path += f"&task_id={self.task_id}"
+                response = self.client.get(query_path, timeout=self.QUERY_TIMEOUT)
 
-            # Extract skill ID and namespace
-            skill_item = skill_items[0]
-            skill_id = skill_item.get("metadata", {}).get("labels", {}).get("id")
-            skill_namespace = skill_item.get("metadata", {}).get("namespace", "default")
+                if not response:
+                    logger.error(
+                        f"[SkillDownloader] Failed to query skill '{skill_name}'"
+                    )
+                    return False
+
+                skills_data = response.json()
+                skill_items = skills_data.get("items", [])
+
+                if not skill_items:
+                    logger.error(f"[SkillDownloader] Skill '{skill_name}' not found")
+                    return False
+
+                # Extract skill ID and namespace
+                skill_item = skill_items[0]
+                skill_id = skill_item.get("metadata", {}).get("labels", {}).get("id")
+                skill_namespace = skill_item.get("metadata", {}).get(
+                    "namespace", "default"
+                )
 
             if not skill_id:
                 logger.error(f"[SkillDownloader] Skill '{skill_name}' has no ID")

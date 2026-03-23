@@ -15,7 +15,7 @@ from sqlalchemy.orm.attributes import flag_modified
 from app.models.kind import Kind
 from app.models.user import User
 from app.schemas.bot import BotCreate, BotDetail, BotInDB, BotUpdate
-from app.schemas.kind import Bot, Ghost, Model, Shell, Team
+from app.schemas.kind import Bot, Ghost, Model, Shell, SkillRefMeta, Team
 from app.services.adapters.shell_utils import (
     get_shell_by_name,
     get_shell_info_by_name,
@@ -300,8 +300,22 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         }
         if obj_in.skills:
             ghost_spec["skills"] = obj_in.skills
+            # Build skill_refs for precise skill identification
+            skill_refs = self._get_skill_refs(db, obj_in.skills, user_id, namespace)
+            if skill_refs:
+                ghost_spec["skill_refs"] = {
+                    name: ref.model_dump() for name, ref in skill_refs.items()
+                }
         if obj_in.preload_skills:
             ghost_spec["preload_skills"] = obj_in.preload_skills
+            # Build preload_skill_refs
+            preload_skill_refs = self._get_skill_refs(
+                db, obj_in.preload_skills, user_id, namespace
+            )
+            if preload_skill_refs:
+                ghost_spec["preload_skill_refs"] = {
+                    name: ref.model_dump() for name, ref in preload_skill_refs.items()
+                }
 
         ghost_json = {
             "kind": "Ghost",
@@ -942,6 +956,17 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
                 self._validate_skills(db, skills, user_id, bot.namespace or "default")
             ghost_crd = Ghost.model_validate(ghost.json)
             ghost_crd.spec.skills = skills
+            # Build skill_refs for precise skill identification
+            if skills:
+                skill_refs = self._get_skill_refs(
+                    db, skills, user_id, bot.namespace or "default"
+                )
+                if skill_refs:
+                    ghost_crd.spec.skill_refs = {
+                        name: ref.model_dump() for name, ref in skill_refs.items()
+                    }
+            else:
+                ghost_crd.spec.skill_refs = None
             ghost.json = ghost_crd.model_dump()
             flag_modified(ghost, "json")
             db.add(ghost)
@@ -951,6 +976,18 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             preload_skills = update_data["preload_skills"] or []
             ghost_crd = Ghost.model_validate(ghost.json)
             ghost_crd.spec.preload_skills = preload_skills
+            # Build preload_skill_refs
+            if preload_skills:
+                preload_skill_refs = self._get_skill_refs(
+                    db, preload_skills, user_id, bot.namespace or "default"
+                )
+                if preload_skill_refs:
+                    ghost_crd.spec.preload_skill_refs = {
+                        name: ref.model_dump()
+                        for name, ref in preload_skill_refs.items()
+                    }
+            else:
+                ghost_crd.spec.preload_skill_refs = None
             ghost.json = ghost_crd.model_dump()
             flag_modified(ghost, "json")
             db.add(ghost)
@@ -1713,6 +1750,103 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
                 status_code=400,
                 detail=f"The following Skills do not exist: {', '.join(missing_skills)}",
             )
+
+    def _get_skill_refs(
+        self,
+        db: Session,
+        skill_names: List[str],
+        user_id: int,
+        namespace: str = "default",
+    ) -> Dict[str, SkillRefMeta]:
+        """
+        Get skill references (skill_id, namespace, is_public) for given skill names.
+
+        Search order (consistent with _validate_skills):
+        1. User's personal skills (user_id=user_id, namespace='default')
+        2. Group skills in namespace (any user, if namespace != 'default')
+        3. Public/system skills (user_id=0, namespace='default')
+
+        Args:
+            db: Database session
+            skill_names: List of skill names to look up
+            user_id: User ID
+            namespace: Bot's namespace (for group skills lookup)
+
+        Returns:
+            Dict mapping skill name to SkillRefMeta
+        """
+        if not skill_names:
+            return {}
+
+        skill_refs: Dict[str, SkillRefMeta] = {}
+        remaining_names = list(skill_names)
+
+        # 1. Query user's personal skills (user_id=user_id, namespace='default')
+        if remaining_names:
+            personal_skills = (
+                db.query(Kind)
+                .filter(
+                    Kind.user_id == user_id,
+                    Kind.kind == "Skill",
+                    Kind.name.in_(remaining_names),
+                    Kind.namespace == "default",
+                    Kind.is_active == True,
+                )
+                .all()
+            )
+            for skill in personal_skills:
+                skill_refs[skill.name] = SkillRefMeta(
+                    skill_id=skill.id,
+                    namespace=skill.namespace,
+                    is_public=False,
+                )
+                remaining_names.remove(skill.name)
+
+        # 2. Query group skills if namespace is not 'default'
+        if remaining_names and namespace != "default":
+            group_skills = (
+                db.query(Kind)
+                .filter(
+                    Kind.kind == "Skill",
+                    Kind.name.in_(remaining_names),
+                    Kind.namespace == namespace,
+                    Kind.is_active == True,
+                )
+                .all()
+            )
+            for skill in group_skills:
+                skill_refs[skill.name] = SkillRefMeta(
+                    skill_id=skill.id,
+                    namespace=skill.namespace,
+                    is_public=False,
+                )
+                remaining_names.remove(skill.name)
+
+        # 3. Query public/system skills (user_id=0)
+        if remaining_names:
+            public_skills = (
+                db.query(Kind)
+                .filter(
+                    Kind.user_id == 0,
+                    Kind.kind == "Skill",
+                    Kind.name.in_(remaining_names),
+                    Kind.namespace == "default",
+                    Kind.is_active == True,
+                )
+                .all()
+            )
+            for skill in public_skills:
+                skill_refs[skill.name] = SkillRefMeta(
+                    skill_id=skill.id,
+                    namespace=skill.namespace,
+                    is_public=True,
+                )
+                remaining_names.remove(skill.name)
+
+        # Note: remaining_names at this point are skills that weren't found
+        # This shouldn't happen if _validate_skills was called first
+
+        return skill_refs
 
 
 bot_kinds_service = BotKindsService(Kind)

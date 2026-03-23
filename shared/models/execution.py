@@ -105,6 +105,10 @@ class ExecutionRequest:
     skills: list = field(
         default_factory=list
     )  # From ChatRequest: Skill metadata for prompt injection
+    skill_refs: dict = field(
+        default_factory=dict
+    )  # Mapping from skill name to skill metadata for precise identification
+    # Format: {"skill_name": {"skill_id": 101, "namespace": "default", "is_public": false}}
 
     # === MCP Configuration ===
     # Format: [{"name": "server_name", "url": "...", "type": "...", "auth": {...}}]

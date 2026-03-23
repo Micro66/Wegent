@@ -193,7 +193,7 @@ class TaskRequestBuilder:
                 for s in effective_preload_skills
             ]
 
-        resolved_skills, resolved_preload_skills, resolved_user_selected = (
+        resolved_skills, resolved_preload_skills, resolved_user_selected, skill_refs = (
             self._get_bot_skills(
                 bot=bot,
                 team=team,
@@ -284,6 +284,7 @@ class TaskRequestBuilder:
             skill_configs=resolved_skills,
             preload_skills=resolved_preload_skills,
             user_selected_skills=user_selected_skills or resolved_user_selected,
+            skill_refs=skill_refs,
             mcp_servers=mcp_servers,
             knowledge_base_ids=knowledge_base_ids,
             document_ids=document_ids,
@@ -732,13 +733,14 @@ class TaskRequestBuilder:
         team: Kind,
         user_id: int,
         user_preload_skills: list | None = None,
-    ) -> tuple[list[dict], list[str], list[str]]:
+    ) -> tuple[list[dict], list[str], list[str], dict[str, dict]]:
         """Get skills for the bot from Ghost, plus any additional skills from frontend.
 
         Returns tuple of:
         - List of skill metadata including tools configuration
         - List of resolved preload skill names (from Ghost CRD + user selected skills)
         - List of user-selected skill names (skills explicitly chosen by user for this message)
+        - Dict mapping skill name to skill reference metadata (skill_id, namespace, is_public)
 
         The tools field contains tool declarations from SKILL.md frontmatter,
         which are used by SkillToolRegistry to dynamically create tool instances.
@@ -751,7 +753,7 @@ class TaskRequestBuilder:
                 Each item can be a dict with {name, namespace, is_public} or a SkillRef object.
 
         Returns:
-            Tuple of (skills, preload_skills, user_selected_skills)
+            Tuple of (skills, preload_skills, user_selected_skills, skill_refs)
         """
         from app.schemas.kind import Skill as SkillCRD
 
@@ -802,6 +804,7 @@ class TaskRequestBuilder:
         preload_skills: list[str] = []
         user_selected_skills: list[str] = []
         existing_skill_names: set[str] = set()
+        skill_refs: dict[str, dict] = {}
 
         # Build preload set from Ghost CRD
         ghost_preload_set = set(ghost_crd.spec.preload_skills or [])
@@ -814,6 +817,13 @@ class TaskRequestBuilder:
                     skill_data = self._build_skill_data(skill)
                     skills.append(skill_data)
                     existing_skill_names.add(skill_name)
+
+                    # Build skill_refs entry
+                    skill_refs[skill_name] = {
+                        "skill_id": skill.id,
+                        "namespace": skill.namespace,
+                        "is_public": skill.user_id == 0,
+                    }
 
                     # Add to preload if configured in Ghost
                     if skill_name in ghost_preload_set:
@@ -875,6 +885,14 @@ class TaskRequestBuilder:
                     existing_skill_names.add(skill_name)
                     preload_skills.append(skill_name)
                     user_selected_skills.append(skill_name)
+
+                    # Build skill_refs entry for user-selected skill
+                    skill_refs[skill_name] = {
+                        "skill_id": skill.id,
+                        "namespace": skill.namespace,
+                        "is_public": skill.user_id == 0,
+                    }
+
                     logger.info(
                         "[_get_bot_skills] Added user-selected skill '%s' to skills, preload, and user_selected",
                         skill_name,
@@ -889,12 +907,13 @@ class TaskRequestBuilder:
                     )
 
         logger.info(
-            "[_get_bot_skills] Final result: preload_skills=%s, user_selected_skills=%s, total skills=%d",
+            "[_get_bot_skills] Final result: preload_skills=%s, user_selected_skills=%s, total skills=%d, skill_refs=%s",
             preload_skills,
             user_selected_skills,
             len(skills),
+            list(skill_refs.keys()),
         )
-        return skills, preload_skills, user_selected_skills
+        return skills, preload_skills, user_selected_skills, skill_refs
 
     def _find_skill(self, skill_name: str, team: Kind) -> Kind | None:
         """Find skill by name.
