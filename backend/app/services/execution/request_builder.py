@@ -820,9 +820,9 @@ class TaskRequestBuilder:
 
                     # Build skill_refs entry
                     skill_refs[skill_name] = {
-                        "skill_id": skill.id,
-                        "namespace": skill.namespace,
-                        "is_public": skill.user_id == 0,
+                        "skill_id": getattr(skill, "id", None),
+                        "namespace": getattr(skill, "namespace", "default"),
+                        "is_public": getattr(skill, "user_id", 1) == 0,
                     }
 
                     # Add to preload if configured in Ghost
@@ -888,9 +888,9 @@ class TaskRequestBuilder:
 
                     # Build skill_refs entry for user-selected skill
                     skill_refs[skill_name] = {
-                        "skill_id": skill.id,
-                        "namespace": skill.namespace,
-                        "is_public": skill.user_id == 0,
+                        "skill_id": getattr(skill, "id", None),
+                        "namespace": getattr(skill, "namespace", skill_namespace),
+                        "is_public": getattr(skill, "user_id", 1) == 0,
                     }
 
                     logger.info(

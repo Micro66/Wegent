@@ -146,7 +146,12 @@ class TestUserScopedMcpInjection:
             return_value={"name": "dingtalk-config-guide"},
         )
 
-        skills, preload_skills, user_selected_skills = builder._get_bot_skills(
+        (
+            skills,
+            preload_skills,
+            user_selected_skills,
+            skill_refs,
+        ) = builder._get_bot_skills(
             bot=bot,
             team=team,
             user_id=2,
@@ -169,3 +174,10 @@ class TestUserScopedMcpInjection:
         assert skills == [{"name": "dingtalk-config-guide"}]
         assert preload_skills == ["dingtalk-config-guide"]
         assert user_selected_skills == ["dingtalk-config-guide"]
+        assert skill_refs == {
+            "dingtalk-config-guide": {
+                "skill_id": None,
+                "namespace": "default",
+                "is_public": True,
+            }
+        }

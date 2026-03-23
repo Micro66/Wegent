@@ -4,6 +4,7 @@
 
 import copy
 import json
+import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -11,6 +12,8 @@ from fastapi import HTTPException
 from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
+
+logger = logging.getLogger(__name__)
 
 from app.models.kind import Kind
 from app.models.user import User
@@ -301,7 +304,11 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         if obj_in.skills:
             ghost_spec["skills"] = obj_in.skills
             # Build skill_refs for precise skill identification
+            logger.info(
+                f"[create_with_user] Building skill_refs for bot: name={obj_in.name}, namespace={namespace}"
+            )
             skill_refs = self._get_skill_refs(db, obj_in.skills, user_id, namespace)
+            logger.info(f"[create_with_user] Built skill_refs: {skill_refs}")
             if skill_refs:
                 ghost_spec["skill_refs"] = {
                     name: ref.model_dump() for name, ref in skill_refs.items()
@@ -1780,8 +1787,38 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
 
         skill_refs: Dict[str, SkillRefMeta] = {}
         remaining_names = list(skill_names)
+        logger.info(
+            f"[_get_skill_refs] Start: skill_names={skill_names}, namespace={namespace}, user_id={user_id}"
+        )
 
-        # 1. Query user's personal skills (user_id=user_id, namespace='default')
+        # Priority: If namespace is not 'default', search group skills FIRST
+        # 1. Query group skills if namespace is not 'default'
+        if remaining_names and namespace != "default":
+            logger.info(
+                f"[_get_skill_refs] Searching group skills in namespace={namespace}, remaining={remaining_names}"
+            )
+            group_skills = (
+                db.query(Kind)
+                .filter(
+                    Kind.kind == "Skill",
+                    Kind.name.in_(remaining_names),
+                    Kind.namespace == namespace,
+                    Kind.is_active == True,
+                )
+                .all()
+            )
+            logger.info(
+                f"[_get_skill_refs] Found {len(group_skills)} group skills: {[s.name for s in group_skills]}"
+            )
+            for skill in group_skills:
+                skill_refs[skill.name] = SkillRefMeta(
+                    skill_id=skill.id,
+                    namespace=skill.namespace,
+                    is_public=False,
+                )
+                remaining_names.remove(skill.name)
+
+        # 2. Query user's personal skills (user_id=user_id, namespace='default') for remaining names
         if remaining_names:
             personal_skills = (
                 db.query(Kind)
@@ -1794,27 +1831,10 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
                 )
                 .all()
             )
-            for skill in personal_skills:
-                skill_refs[skill.name] = SkillRefMeta(
-                    skill_id=skill.id,
-                    namespace=skill.namespace,
-                    is_public=False,
-                )
-                remaining_names.remove(skill.name)
-
-        # 2. Query group skills if namespace is not 'default'
-        if remaining_names and namespace != "default":
-            group_skills = (
-                db.query(Kind)
-                .filter(
-                    Kind.kind == "Skill",
-                    Kind.name.in_(remaining_names),
-                    Kind.namespace == namespace,
-                    Kind.is_active == True,
-                )
-                .all()
+            logger.info(
+                f"[_get_skill_refs] Found {len(personal_skills)} personal skills: {[s.name for s in personal_skills]}"
             )
-            for skill in group_skills:
+            for skill in personal_skills:
                 skill_refs[skill.name] = SkillRefMeta(
                     skill_id=skill.id,
                     namespace=skill.namespace,
