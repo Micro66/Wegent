@@ -813,6 +813,9 @@ class ClaudeCodeAgent(Agent):
                     f"(bot_id={self._bot_id}): {saved_session_id}"
                 )
                 self.options["resume"] = saved_session_id
+                await SessionManager.terminate_stale_resumed_process(
+                    self.task_id, self._bot_id, saved_session_id
+                )
 
         # On Windows, write large options to files to avoid command line length limit
         # Windows has a ~8191 character limit (WinError 206 if exceeded)
@@ -879,6 +882,7 @@ class ClaudeCodeAgent(Agent):
 
                 # Remove resume option and retry
                 del self.options["resume"]
+                saved_session_id = None
 
                 # Recreate client without resume option
                 if self.options:
@@ -895,6 +899,19 @@ class ClaudeCodeAgent(Agent):
             else:
                 # Not a resume failure, re-raise the exception
                 raise
+
+        # Persist process PID for resume-session cleanup on next execution
+        if saved_session_id:
+            pid = None
+            transport = getattr(self.client, "_transport", None)
+            if transport is not None:
+                process = getattr(transport, "_process", None)
+                pid = getattr(process, "pid", None)
+
+            if isinstance(pid, int):
+                SessionManager.register_client_process(
+                    self.task_id, self._bot_id, saved_session_id, pid
+                )
 
         # Note: No longer caching client in SessionManager since each subtask
         # creates a new Agent instance and destroys it after completion.
