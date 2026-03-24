@@ -16,8 +16,8 @@ sidebar_position: 1
 
 - 保留 `Ghost.spec.skills` 作为兼容索引（按 `name`）。
 - 新增 `Ghost.spec.skill_refs` 作为精确元数据（`name -> skill_id`）。
-- Backend 同时下发 `skill_names` 与 `skill_refs`。
-- Executor 新版本优先按 `skill_id` 下载；无 `skill_refs` 时回退旧逻辑按 `name`。
+- Backend 继续下发 `skill_names`，并使用已有 `skill_configs` 传递 `skill_id` 元数据。
+- Executor 新版本优先从 `skill_configs` 读取 `skill_id` 下载；无可用 `skill_id` 时回退旧逻辑按 `name`。
 - 继续按 `name` 去重。
 - 暂不支持“同时挂两个同名 skill”能力。
 
@@ -116,26 +116,26 @@ sidebar_position: 1
 ExecutionRequest 同时携带：
 
 - `skill_names: list[str]`（兼容旧版本）
-- `skill_refs: dict[str, SkillRefMeta]`（新版本优先）
+- `skill_configs: list[dict]`（已有字段，包含 `name`、`skill_id` 等元数据）
 
 兼容原则：
 
-1. 旧 Executor：忽略 `skill_refs`，继续使用 `skill_names`。
-2. 新 Executor：若某 `name` 在 `skill_refs` 存在，优先按 `skill_id` 下载。
-3. 新 Executor：若 `skill_refs` 缺失该 `name`，回退旧 name 查询。
+1. 旧 Executor：继续使用 `skill_names`，行为不变。
+2. 新 Executor：优先在 `skill_configs` 中按 `name` 找到 `skill_id`，并按 `skill_id` 下载。
+3. 新 Executor：若 `skill_configs` 缺失该 `name` 的 `skill_id`，回退旧 name 查询。
 4. 去重策略保持不变：按 `name` 去重。
 
 ## 下载策略设计
 
 ### 新版本路径
 
-当 `skill_refs[name]` 存在时：
+当 `skill_configs` 中存在该 `name` 对应的 `skill_id` 时：
 
 - 直接调用 `/api/v1/kinds/skills/{skill_id}/download?namespace=...`
 
 ### 旧版本回退路径
 
-当 `skill_refs` 不存在或缺项时：
+当 `skill_configs` 不存在或缺少有效 `skill_id` 时：
 
 - 调用 `/api/v1/kinds/skills?name=...&namespace=...`
 - 维持现有行为（兼容旧设备）。
@@ -146,7 +146,7 @@ ExecutionRequest 同时携带：
 - 可用。旧 Executor 仅消费 `skill_names`。
 
 2. 旧 Backend + 新 Executor
-- 可用。新 Executor 检测无 `skill_refs` 后回退旧逻辑。
+- 可用。新 Executor 检测无有效 `skill_configs` 后回退旧逻辑。
 
 3. 新 Backend + 新 Executor
 - 目标态。优先按 `skill_id` 下载，规避同名串用。
@@ -160,12 +160,12 @@ ExecutionRequest 同时携带：
 
 1. 增加 schema 对 `skill_refs`/`preload_skill_refs` 的读写支持。
 2. 写路径双写（保留 `skills`，新增 `skill_refs`）。
-3. 请求下发双字段（`skill_names` + `skill_refs`）。
+3. 保持请求下发 `skill_names + skill_configs`（不新增 `skill_refs` 请求字段）。
 
 ### 阶段 2：Executor 上线（优先 skill_id）
 
-1. 增加 `skill_refs` 解析。
-2. 优先 `skill_id` 下载；缺失时回退 name 下载。
+1. 增加 `skill_configs` 解析。
+2. 优先从 `skill_configs` 解析 `skill_id` 下载；缺失时回退 name 下载。
 3. 保持按 `name` 去重。
 
 ### 阶段 3：三池灰度
@@ -180,13 +180,13 @@ ExecutionRequest 同时携带：
 建议引入以下开关：
 
 1. `SKILL_REFS_READ_ENABLED`
-- 控制是否读取 `skill_refs`。
+- 控制 Ghost 解析时是否读取 `skill_refs`。
 
 2. `SKILL_REFS_DUAL_WRITE_ENABLED`
 - 控制写路径是否双写 `skills` + `skill_refs`。
 
 3. `SKILL_REFS_DOWNLOAD_BY_ID_ENABLED`
-- 控制 Executor 是否优先按 `skill_id` 下载。
+- 控制 Executor 是否优先根据 `skill_configs.skill_id` 下载。
 
 4. `SKILL_REFS_STRICT_AMBIGUITY_FAIL`
 - 控制歧义时是否强制失败（建议开启）。
@@ -195,11 +195,11 @@ ExecutionRequest 同时携带：
 
 核心指标：
 
-1. `skill_refs_hit_count`
-- 走 `skill_refs` 命中次数。
+1. `skill_configs_id_hit_count`
+- Executor 通过 `skill_configs` 命中 `skill_id` 的次数。
 
-2. `skill_refs_missing_fallback_count`
-- 缺失 `skill_refs` 后回退 name 查询次数。
+2. `skill_configs_id_missing_fallback_count`
+- 缺失有效 `skill_id` 后回退 name 查询次数。
 
 3. `skill_ambiguity_error_count`
 - 同名解析歧义失败次数。
@@ -213,12 +213,12 @@ ExecutionRequest 同时携带：
 告警建议：
 
 - `skill_ambiguity_error_count > 0` 触发高优先级告警。
-- `skill_refs_missing_fallback_count` 持续偏高触发中优先级告警。
+- `skill_configs_id_missing_fallback_count` 持续偏高触发中优先级告警。
 
 ## 回滚策略
 
 1. 关闭 `SKILL_REFS_DOWNLOAD_BY_ID_ENABLED`，Executor 恢复旧下载路径。
-2. 关闭 `SKILL_REFS_READ_ENABLED`，Backend 恢复旧解析路径。
+2. 关闭 `SKILL_REFS_READ_ENABLED`，Backend 恢复仅旧字段解析路径。
 3. 保持 `skills` 数据不变，确保回滚后系统可运行。
 4. 不需要回滚数据库结构（新增字段可忽略）。
 
@@ -237,7 +237,7 @@ ExecutionRequest 同时携带：
 - 新链路确认下载目标为 `skill_id` 指向对象。
 
 2. 混合版本场景：
-- 无 `skill_refs` 时新 Executor 回退旧逻辑可用。
+- 无有效 `skill_configs.skill_id` 时新 Executor 回退旧逻辑可用。
 
 3. 双写一致性：
 - `skills` 和 `skill_refs` key 集合一致。
@@ -259,23 +259,23 @@ ExecutionRequest 同时携带：
 - 创建/更新 Bot/Ghost 时双写新旧字段。
 
 3. `backend/app/services/execution/request_builder.py`
-- 构建 ExecutionRequest 时同时输出 `skill_names` 与 `skill_refs`。
+- 构建 ExecutionRequest 时保证 `skill_configs` 含 `skill_id` 元数据。
 - 解析链路优先使用 `skill_refs`。
 
 4. `shared/models/execution.py`
-- 增加 `skill_refs` 字段，保持反序列化兼容。
+- 无需新增协议字段，沿用既有 `skill_configs`。
 
 ### Executor
 
 1. `executor/services/api_client.py`
-- 增加按 `skill_id` 下载接口调用。
+- 增加基于 `skill_configs.skill_id` 的下载分支。
 - 保留 name 查询回退路径。
 
 2. `executor/agents/claude_code/skill_deployer.py`
-- 加入 `skill_refs` 优先分支。
+- 加入 `skill_configs` 优先 `skill_id` 下载分支。
 
 3. `executor/app.py`
-- 初始化下载链路接入 `skill_refs`。
+- 初始化下载链路接入 `skill_configs` 优先分支。
 
 ## 验收标准
 

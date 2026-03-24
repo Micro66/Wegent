@@ -292,6 +292,8 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         # Validate skills if provided
         if obj_in.skills:
             self._validate_skills(db, obj_in.skills, user_id, namespace)
+        if obj_in.preload_skills:
+            self._validate_skills(db, obj_in.preload_skills, user_id, namespace)
 
         # Encrypt sensitive data in agent_config before storing
         encrypted_agent_config = self._encrypt_agent_config(obj_in.agent_config)
@@ -319,6 +321,11 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             preload_skill_refs = self._get_skill_refs(
                 db, obj_in.preload_skills, user_id, namespace
             )
+            if len(preload_skill_refs) != len(set(obj_in.preload_skills)):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Failed to resolve preload_skills to skill refs",
+                )
             if preload_skill_refs:
                 ghost_spec["preload_skill_refs"] = {
                     name: ref.model_dump() for name, ref in preload_skill_refs.items()
@@ -981,6 +988,10 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         if "preload_skills" in update_data and ghost:
             # Update preload_skills in Ghost CRD
             preload_skills = update_data["preload_skills"] or []
+            if preload_skills:
+                self._validate_skills(
+                    db, preload_skills, user_id, bot.namespace or "default"
+                )
             ghost_crd = Ghost.model_validate(ghost.json)
             ghost_crd.spec.preload_skills = preload_skills
             # Build preload_skill_refs
@@ -988,6 +999,11 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
                 preload_skill_refs = self._get_skill_refs(
                     db, preload_skills, user_id, bot.namespace or "default"
                 )
+                if len(preload_skill_refs) != len(set(preload_skills)):
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Failed to resolve preload_skills to skill refs",
+                    )
                 if preload_skill_refs:
                     ghost_crd.spec.preload_skill_refs = {
                         name: ref.model_dump()

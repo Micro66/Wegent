@@ -271,7 +271,7 @@ class SkillDownloader:
         skills: List[str],
         clear_cache: bool = True,
         skip_existing: bool = False,
-        skill_refs: Optional[Dict[str, Dict[str, Any]]] = None,
+        resolved_skill_map: Optional[Dict[str, Dict[str, Any]]] = None,
     ) -> SkillDownloadResult:
         """Download and deploy skills to skills directory.
 
@@ -279,8 +279,9 @@ class SkillDownloader:
             skills: List of skill names to download
             clear_cache: If True, clear skills directory before download (Docker mode)
             skip_existing: If True, skip skills that already exist (Local mode)
-            skill_refs: Optional mapping from skill name to skill metadata (skill_id, namespace, is_public)
-                       If provided, skills will be downloaded by skill_id for precise identification.
+            resolved_skill_map: Optional mapping from skill name to resolved metadata
+                                (skill_id, namespace, is_public). If provided, download
+                                prefers skill_id and falls back to name-based query.
 
         Returns:
             SkillDownloadResult with success count and directory path
@@ -318,8 +319,10 @@ class SkillDownloader:
         # Download each skill
         success_count = 0
         for skill_name in skills_to_download:
-            # Get skill_ref if available for precise identification
-            skill_ref = skill_refs.get(skill_name) if skill_refs else None
+            # Get resolved skill metadata if available for precise identification
+            skill_ref = (
+                resolved_skill_map.get(skill_name) if resolved_skill_map else None
+            )
             if self._download_single_skill(skill_name, skill_ref):
                 success_count += 1
 
@@ -394,7 +397,7 @@ class SkillDownloader:
             # If no skill_id from skill_ref, fall back to name-based query
             if not skill_id:
                 logger.info(
-                    f"[SkillDownloader] No skill_ref provided, falling back to name-based query"
+                    "[SkillDownloader] No skill_id in resolved map, falling back to name-based query"
                 )
 
                 # Query skill by name

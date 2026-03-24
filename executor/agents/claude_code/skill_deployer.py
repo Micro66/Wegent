@@ -19,6 +19,62 @@ from shared.models.execution import ExecutionRequest
 logger = setup_logger("claude_code_skill_deployer")
 
 
+def resolve_skill_download_map(
+    skills: List[str],
+    preload_skills: List[str],
+    skill_configs: List[Dict[str, Any]],
+    skill_refs: Dict[str, Dict[str, Any]],
+    preload_skill_refs: Dict[str, Dict[str, Any]],
+) -> Dict[str, Dict[str, Any]]:
+    """Build unified skill metadata mapping for download decisions.
+
+    Priority per skill name:
+    1. skill_configs.skill_id
+    2. preload_skill_refs[name] (for preload override)
+    3. skill_refs[name]
+    4. fallback to name-based query (handled by downloader)
+    """
+
+    config_map: Dict[str, Dict[str, Any]] = {}
+    for item in skill_configs or []:
+        if isinstance(item, dict) and item.get("name"):
+            config_map[item["name"]] = item
+
+    resolved: Dict[str, Dict[str, Any]] = {}
+
+    # Fill from primary skills first.
+    for name in skills or []:
+        config_item = config_map.get(name, {})
+        if config_item.get("skill_id"):
+            resolved[name] = {
+                "skill_id": config_item.get("skill_id"),
+                "namespace": config_item.get("namespace", "default"),
+                "is_public": config_item.get("is_public", False),
+            }
+            continue
+        if name in skill_refs:
+            resolved[name] = skill_refs[name]
+
+    # Preload refs may override same-name skills.
+    for name in preload_skills or []:
+        preload_ref = preload_skill_refs.get(name)
+        if preload_ref:
+            resolved[name] = preload_ref
+            continue
+        if name not in resolved:
+            config_item = config_map.get(name, {})
+            if config_item.get("skill_id"):
+                resolved[name] = {
+                    "skill_id": config_item.get("skill_id"),
+                    "namespace": config_item.get("namespace", "default"),
+                    "is_public": config_item.get("is_public", False),
+                }
+            elif name in skill_refs:
+                resolved[name] = skill_refs[name]
+
+    return resolved
+
+
 def download_and_deploy_skills(
     bot_config: Dict[str, Any],
     task_data: ExecutionRequest,
@@ -42,19 +98,32 @@ def download_and_deploy_skills(
     try:
         from executor.services.api_client import SkillDownloader
 
-        # Extract skills list from bot_config (skills is at top level, not in spec)
-        skills = bot_config.get("skills", [])
+        # Extract skills list from bot_config and execution request metadata.
+        # Final download set is unique(skills ∪ preload_skills).
+        skill_set = set(bot_config.get("skills", []))
+        skill_set.update(task_data.skill_names or [])
+        skill_set.update(task_data.preload_skills or [])
+        skills = list(skill_set)
         if not skills:
             logger.debug("No skills configured for this bot")
             return
 
         logger.info(f"Found {len(skills)} skills to deploy: {skills}")
 
-        # Get skill_refs from task_data for precise skill identification
+        # Build unified mapping for precise skill identification.
         skill_refs = task_data.skill_refs or {}
-        if skill_refs:
+        preload_skill_refs = task_data.preload_skill_refs or {}
+        resolved_skill_map = resolve_skill_download_map(
+            skills=skills,
+            preload_skills=task_data.preload_skills or [],
+            skill_configs=task_data.skill_configs or [],
+            skill_refs=skill_refs,
+            preload_skill_refs=preload_skill_refs,
+        )
+        if resolved_skill_map:
             logger.info(
-                f"Using skill_refs for precise identification: {list(skill_refs.keys())}"
+                "Using resolved skill map for precise identification: %s",
+                list(resolved_skill_map.keys()),
             )
 
         # Get skills directory from strategy
@@ -82,7 +151,7 @@ def download_and_deploy_skills(
             skills=skills,
             clear_cache=deployment_options["clear_cache"],
             skip_existing=deployment_options["skip_existing"],
-            skill_refs=skill_refs,
+            resolved_skill_map=resolved_skill_map,
         )
 
         logger.info(
