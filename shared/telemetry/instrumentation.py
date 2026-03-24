@@ -17,6 +17,8 @@ This module provides auto-instrumentation for:
 import logging
 from typing import Any, Optional
 
+from shared.telemetry.context.large_data import log_json_body
+
 
 def setup_opentelemetry_instrumentation(
     app: Any,
@@ -418,18 +420,7 @@ def _create_httpx_request_hook(capture_settings: dict, logger: logging.Logger):
                     # HTTPX request body is in request.content
                     if hasattr(request, "content") and request.content:
                         body = request.content
-                        max_body_size = capture_settings.get("max_body_size", 4096)
-                        if isinstance(body, bytes):
-                            if len(body) <= max_body_size:
-                                body_str = body.decode("utf-8", errors="replace")
-                            else:
-                                body_str = (
-                                    body[:max_body_size].decode(
-                                        "utf-8", errors="replace"
-                                    )
-                                    + f"... [truncated, total size: {len(body)} bytes]"
-                                )
-                            span.set_attribute("http.request.body", body_str)
+                        log_json_body("http.request.body", body)
                 except Exception as e:
                     logger.debug(f"Failed to capture HTTPX request body: {e}")
 
@@ -464,18 +455,7 @@ def _create_httpx_response_hook(capture_settings: dict, logger: logging.Logger):
                     # HTTPX response body is in response.content
                     if hasattr(response, "content") and response.content:
                         body = response.content
-                        max_body_size = capture_settings.get("max_body_size", 4096)
-                        if isinstance(body, bytes):
-                            if len(body) <= max_body_size:
-                                body_str = body.decode("utf-8", errors="replace")
-                            else:
-                                body_str = (
-                                    body[:max_body_size].decode(
-                                        "utf-8", errors="replace"
-                                    )
-                                    + f"... [truncated, total size: {len(body)} bytes]"
-                                )
-                            span.set_attribute("http.response.body", body_str)
+                        log_json_body("http.response.body", body)
                 except Exception as e:
                     logger.debug(f"Failed to capture HTTPX response body: {e}")
 
@@ -607,32 +587,10 @@ def _create_httpx_async_request_hook(capture_settings: dict, logger: logging.Log
                             )
 
                     if body:
-                        if isinstance(body, bytes):
-                            if len(body) <= max_body_size:
-                                body_str = body.decode("utf-8", errors="replace")
-                            else:
-                                body_str = (
-                                    body[:max_body_size].decode(
-                                        "utf-8", errors="replace"
-                                    )
-                                    + f"... [truncated, total size: {len(body)} bytes]"
-                                )
-                            span.set_attribute("http.request.body", body_str)
-                            logger.debug(
-                                f"[OTEL DEBUG] Captured request body: {len(body)} bytes"
-                            )
-                        elif isinstance(body, str):
-                            if len(body) <= max_body_size:
-                                span.set_attribute("http.request.body", body)
-                            else:
-                                span.set_attribute(
-                                    "http.request.body",
-                                    body[:max_body_size]
-                                    + f"... [truncated, total size: {len(body)} chars]",
-                                )
-                            logger.debug(
-                                f"[OTEL DEBUG] Captured request body: {len(body)} chars"
-                            )
+                        log_json_body("http.request.body", body)
+                        logger.debug(
+                            f"[OTEL DEBUG] Captured request body: {len(body) if isinstance(body, (bytes, str)) else 'unknown'} bytes/chars"
+                        )
                     else:
                         logger.info("[OTEL DEBUG] No request body found to capture")
                 except Exception as e:
@@ -672,18 +630,7 @@ def _create_httpx_async_response_hook(capture_settings: dict, logger: logging.Lo
                     # Note: This may not work for streaming responses
                     if hasattr(response, "content") and response.content:
                         body = response.content
-                        max_body_size = capture_settings.get("max_body_size", 4096)
-                        if isinstance(body, bytes):
-                            if len(body) <= max_body_size:
-                                body_str = body.decode("utf-8", errors="replace")
-                            else:
-                                body_str = (
-                                    body[:max_body_size].decode(
-                                        "utf-8", errors="replace"
-                                    )
-                                    + f"... [truncated, total size: {len(body)} bytes]"
-                                )
-                            span.set_attribute("http.response.body", body_str)
+                        log_json_body("http.response.body", body)
                 except Exception as e:
                     logger.debug(f"Failed to capture HTTPX async response body: {e}")
 
@@ -718,27 +665,7 @@ def _create_requests_request_hook(capture_settings: dict, logger: logging.Logger
                     # Requests body is in request.body
                     if hasattr(request, "body") and request.body:
                         body = request.body
-                        max_body_size = capture_settings.get("max_body_size", 4096)
-                        if isinstance(body, bytes):
-                            if len(body) <= max_body_size:
-                                body_str = body.decode("utf-8", errors="replace")
-                            else:
-                                body_str = (
-                                    body[:max_body_size].decode(
-                                        "utf-8", errors="replace"
-                                    )
-                                    + f"... [truncated, total size: {len(body)} bytes]"
-                                )
-                            span.set_attribute("http.request.body", body_str)
-                        elif isinstance(body, str):
-                            if len(body) <= max_body_size:
-                                span.set_attribute("http.request.body", body)
-                            else:
-                                span.set_attribute(
-                                    "http.request.body",
-                                    body[:max_body_size]
-                                    + f"... [truncated, total size: {len(body)} chars]",
-                                )
+                        log_json_body("http.request.body", body)
                 except Exception as e:
                     logger.debug(f"Failed to capture Requests request body: {e}")
 
@@ -773,18 +700,7 @@ def _create_requests_response_hook(capture_settings: dict, logger: logging.Logge
                     # Requests response body is in response.content or response.text
                     if hasattr(response, "content") and response.content:
                         body = response.content
-                        max_body_size = capture_settings.get("max_body_size", 4096)
-                        if isinstance(body, bytes):
-                            if len(body) <= max_body_size:
-                                body_str = body.decode("utf-8", errors="replace")
-                            else:
-                                body_str = (
-                                    body[:max_body_size].decode(
-                                        "utf-8", errors="replace"
-                                    )
-                                    + f"... [truncated, total size: {len(body)} bytes]"
-                                )
-                            span.set_attribute("http.response.body", body_str)
+                        log_json_body("http.response.body", body)
                 except Exception as e:
                     logger.debug(f"Failed to capture Requests response body: {e}")
 
