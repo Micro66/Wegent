@@ -43,6 +43,7 @@ import { fetchUnifiedSkillsList, fetchPublicSkillsList, UnifiedSkill } from '@/a
 import { publicResourceApis, PublicBotFormData } from '@/apis/publicResources'
 import { useTranslation } from '@/hooks/useTranslation'
 import { adaptMcpConfigForAgent, isValidAgentType } from '../utils/mcpTypeAdapter'
+import { buildSkillRefsFromSelection } from '../utils/skillRefResolver'
 
 /** Agent types supported by the system */
 export type AgentType = 'ClaudeCode' | 'Agno' | 'Dify'
@@ -582,42 +583,6 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     return { isValid: true }
   }, [botName, agentName, isDifyAgent, agentConfig, isCustomModel, selectedProtocol, mcpConfig, t])
 
-  const buildSkillRefsFromSelection = useCallback(
-    (
-      skillNames: string[],
-      existingRefs: Record<string, SkillRefMeta>,
-      skillPool: UnifiedSkill[]
-    ): Record<string, SkillRefMeta> => {
-      const result: Record<string, SkillRefMeta> = {}
-
-      for (const skillName of skillNames) {
-        const existingRef = existingRefs[skillName]
-        if (existingRef) {
-          result[skillName] = existingRef
-          continue
-        }
-
-        const resolvedSkill =
-          skillPool.find(
-            skill => skill.name === skillName && !skill.is_public && skill.namespace === 'default'
-          ) ||
-          skillPool.find(skill => skill.name === skillName && !skill.is_public) ||
-          skillPool.find(skill => skill.name === skillName)
-
-        if (resolvedSkill) {
-          result[skillName] = {
-            skill_id: resolvedSkill.id,
-            namespace: resolvedSkill.namespace || 'default',
-            is_public: resolvedSkill.is_public || false,
-          }
-        }
-      }
-
-      return result
-    },
-    []
-  )
-
   // Get bot form data for external use
   const getBotData = useCallback((): BotFormData | null => {
     const validation = validateBot()
@@ -657,7 +622,13 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
       system_prompt: isDifyAgent ? '' : prompt.trim() || '',
       mcp_servers: parsedMcpConfig,
       skills: selectedSkills.length > 0 ? selectedSkills : [],
-      skill_refs: buildSkillRefsFromSelection(selectedSkills, selectedSkillRefs, availableSkills),
+      skill_refs: buildSkillRefsFromSelection(
+        selectedSkills,
+        selectedSkillRefs,
+        availableSkills,
+        scope,
+        groupName
+      ),
       // preload_skills: preloadSkills.length > 0 ? preloadSkills : [],
     }
   }, [
@@ -675,7 +646,8 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     selectedSkills,
     selectedSkillRefs,
     availableSkills,
-    buildSkillRefsFromSelection,
+    scope,
+    groupName,
     selectedModelNamespace,
   ])
 
@@ -912,7 +884,9 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
           skill_refs: buildSkillRefsFromSelection(
             selectedSkills,
             selectedSkillRefs,
-            availableSkills
+            availableSkills,
+            scope,
+            groupName
           ),
           // preload_skills: preloadSkills.length > 0 ? preloadSkills : [],
           namespace: scope === 'group' && groupName ? groupName : undefined,

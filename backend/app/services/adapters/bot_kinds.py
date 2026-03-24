@@ -1884,6 +1884,8 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
                 f"[_get_skill_refs] Found {len(group_skills)} group skills: {[s.name for s in group_skills]}"
             )
             for skill in group_skills:
+                if skill.name not in remaining_names:
+                    continue
                 skill_refs[skill.name] = SkillRefMeta(
                     skill_id=skill.id,
                     namespace=skill.namespace,
