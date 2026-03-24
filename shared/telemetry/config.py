@@ -23,6 +23,8 @@ Environment Variables:
     OTEL_EXCLUDED_URLS: Comma-separated list of URL patterns to exclude from tracing (default: health,metrics,docs)
     OTEL_INCLUDED_URLS: Comma-separated list of URL patterns to include (whitelist mode, empty means all)
     OTEL_DISABLE_SEND_RECEIVE_SPANS: Disable internal http.send/http.receive spans for SSE/streaming (default: true)
+    OTEL_REDIS_FILTER_MODE: Redis span filtering mode - "all", "errors", "slow", "websocket" (default: websocket)
+    OTEL_REDIS_SLOW_THRESHOLD_MS: Slow Redis query threshold in milliseconds (default: 100)
         This is the industry standard approach to reduce noise from streaming endpoints like /api/chat/stream
         where each chunk would otherwise create a separate span. See OpenTelemetry ASGI instrumentation docs.
 """
