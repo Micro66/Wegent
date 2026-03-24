@@ -37,3 +37,28 @@ def test_resolve_skill_download_map_prefers_skill_config_and_preload_override():
 
     assert resolved["dup-skill"]["skill_id"] == 300
     assert resolved["plain-skill"]["skill_id"] == 200
+
+
+def test_resolve_skill_download_map_prefers_explicit_refs_over_skill_configs():
+    resolved = resolve_skill_download_map(
+        skills=["conflict-skill"],
+        preload_skills=[],
+        skill_configs=[
+            {
+                "name": "conflict-skill",
+                "skill_id": 111,
+                "namespace": "default",
+                "is_public": False,
+            }
+        ],
+        skill_refs={
+            "conflict-skill": {
+                "skill_id": 222,
+                "namespace": "team-a",
+                "is_public": False,
+            }
+        },
+        preload_skill_refs={},
+    )
+
+    assert resolved["conflict-skill"]["skill_id"] == 222

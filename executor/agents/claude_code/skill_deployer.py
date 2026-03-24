@@ -29,9 +29,9 @@ def resolve_skill_download_map(
     """Build unified skill metadata mapping for download decisions.
 
     Priority per skill name:
-    1. skill_configs.skill_id
-    2. preload_skill_refs[name] (for preload override)
-    3. skill_refs[name]
+    1. preload_skill_refs[name] (for preload override)
+    2. skill_refs[name]
+    3. skill_configs.skill_id
     4. fallback to name-based query (handled by downloader)
     """
 
@@ -44,6 +44,13 @@ def resolve_skill_download_map(
 
     # Fill from primary skills first.
     for name in skills or []:
+        if name in preload_skill_refs:
+            resolved[name] = preload_skill_refs[name]
+            continue
+        if name in skill_refs:
+            resolved[name] = skill_refs[name]
+            continue
+
         config_item = config_map.get(name, {})
         if config_item.get("skill_id"):
             resolved[name] = {
@@ -51,9 +58,6 @@ def resolve_skill_download_map(
                 "namespace": config_item.get("namespace", "default"),
                 "is_public": config_item.get("is_public", False),
             }
-            continue
-        if name in skill_refs:
-            resolved[name] = skill_refs[name]
 
     # Preload refs may override same-name skills.
     for name in preload_skills or []:
@@ -62,6 +66,10 @@ def resolve_skill_download_map(
             resolved[name] = preload_ref
             continue
         if name not in resolved:
+            skill_ref = skill_refs.get(name)
+            if skill_ref:
+                resolved[name] = skill_ref
+                continue
             config_item = config_map.get(name, {})
             if config_item.get("skill_id"):
                 resolved[name] = {
@@ -69,8 +77,6 @@ def resolve_skill_download_map(
                     "namespace": config_item.get("namespace", "default"),
                     "is_public": config_item.get("is_public", False),
                 }
-            elif name in skill_refs:
-                resolved[name] = skill_refs[name]
 
     return resolved
 
