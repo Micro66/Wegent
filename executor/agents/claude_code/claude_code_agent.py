@@ -660,24 +660,48 @@ class ClaudeCodeAgent(Agent):
                         prompt, cwd_text, prepend=False
                     )
             else:
-                # Plain text prompt
-                if user_selected_skills:
-                    skill_emphasis = self._build_skill_emphasis_prompt(
-                        user_selected_skills
-                    )
-                    prompt = skill_emphasis + "\n\n" + prompt
-                    logger.info(
-                        f"Added skill emphasis for {len(user_selected_skills)} user-selected skills: {user_selected_skills}"
-                    )
-                if self.options.get("cwd"):
-                    prompt = (
-                        prompt
-                        + "\nCurrent working directory: "
-                        + self.options.get("cwd")
-                    )
-                    git_url = self.task_data.git_url
-                    if git_url:
-                        prompt = prompt + "\n project url:" + git_url
+                # Plain text prompt (or content block list without images)
+                if isinstance(prompt, list):
+                    # Handle content block list (non-vision)
+                    if user_selected_skills:
+                        skill_emphasis = self._build_skill_emphasis_prompt(
+                            user_selected_skills
+                        )
+                        prompt = append_text_to_vision_prompt(
+                            prompt, skill_emphasis, prepend=True
+                        )
+                        logger.info(
+                            f"Added skill emphasis for {len(user_selected_skills)} user-selected skills: {user_selected_skills}"
+                        )
+                    if self.options.get("cwd"):
+                        cwd_text = "\nCurrent working directory: " + self.options.get(
+                            "cwd"
+                        )
+                        git_url = self.task_data.git_url
+                        if git_url:
+                            cwd_text += "\n project url:" + git_url
+                        prompt = append_text_to_vision_prompt(
+                            prompt, cwd_text, prepend=False
+                        )
+                else:
+                    # Handle string prompt
+                    if user_selected_skills:
+                        skill_emphasis = self._build_skill_emphasis_prompt(
+                            user_selected_skills
+                        )
+                        prompt = skill_emphasis + "\n\n" + prompt
+                        logger.info(
+                            f"Added skill emphasis for {len(user_selected_skills)} user-selected skills: {user_selected_skills}"
+                        )
+                    if self.options.get("cwd"):
+                        prompt = (
+                            prompt
+                            + "\nCurrent working directory: "
+                            + self.options.get("cwd")
+                        )
+                        git_url = self.task_data.git_url
+                        if git_url:
+                            prompt = prompt + "\n project url:" + git_url
 
             progress = 75
             # Update current progress
