@@ -141,11 +141,18 @@ def log_json_body(
 
     Args:
         attribute_name: Base name for the attribute (e.g., "request.body", "response.body")
-        body: The JSON body (dict, list, or string)
+        body: The JSON body (dict, list, string, or bytes)
         max_attr_preview: Maximum length for the preview attribute (default: 100)
         max_event_size: Maximum size for the event body (default: 10000)
     """
     try:
+        # Handle bytes input (common for HTTP bodies)
+        if isinstance(body, bytes):
+            try:
+                body = body.decode("utf-8", errors="replace")
+            except Exception:
+                body = str(body)
+
         # Parse body if it's a string
         if isinstance(body, str):
             try:
