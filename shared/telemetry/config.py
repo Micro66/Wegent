@@ -345,12 +345,16 @@ def get_excluded_urls_regex() -> str:
 
     This is useful for passing to FastAPIInstrumentor's excluded_urls parameter.
 
+    Note: The regex uses word boundaries and path separators to ensure exact matching
+    without ^ and $ anchors. FastAPIInstrumentor's excluded_urls matches against
+    the full URL path using re.search().
+
     Returns:
         str: Regex pattern string that matches all excluded URLs
 
     Example:
         >>> get_excluded_urls_regex()
-        '/health|/healthz|/ready|/metrics|/api/docs|/api/openapi.json|/favicon.ico'
+        '^/$|^/health$|^/healthz$|^/ready$|^/metrics$|^/api/docs$|^/api/openapi\\.json$|/api/quota/.*|^/favicon\\.ico$'
     """
     config = get_otel_config()
     if not config.excluded_urls:
@@ -360,14 +364,15 @@ def get_excluded_urls_regex() -> str:
     regex_parts = []
     for pattern in config.excluded_urls:
         if pattern.startswith("^"):
-            # Already a regex, use as-is (remove the ^ as we'll join with |)
-            regex_parts.append(pattern[1:] if pattern.startswith("^") else pattern)
+            # Already a regex, use as-is
+            regex_parts.append(pattern)
         elif pattern.endswith("*"):
             # Wildcard pattern: /api/* -> /api/.*
             prefix = re.escape(pattern[:-1])
             regex_parts.append(f"{prefix}.*")
         else:
-            # Exact match: escape special chars and add anchors
+            # Exact match: add ^ and $ anchors for exact path matching
+            # This ensures /health only matches /health, not /healthcheck
             regex_parts.append(f"^{re.escape(pattern)}$")
 
     return "|".join(regex_parts)
