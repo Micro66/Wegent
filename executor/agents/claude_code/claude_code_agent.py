@@ -742,6 +742,14 @@ class ClaudeCodeAgent(Agent):
                     create_multimodal_query(anthropic_content),
                     session_id=self.session_id,
                 )
+            elif isinstance(prompt, list):
+                # Content block list without images - convert to Anthropic format
+                # and send via multimodal query (SDK expects async generator for content blocks)
+                anthropic_content = convert_openai_to_anthropic_content(prompt)
+                await self.client.query(
+                    create_multimodal_query(anthropic_content),
+                    session_id=self.session_id,
+                )
             else:
                 await self.client.query(prompt, session_id=self.session_id)
 
