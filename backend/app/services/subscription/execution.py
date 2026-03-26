@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import HTTPException
+from pydantic import ValidationError
 from sqlalchemy import desc
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
@@ -28,6 +29,8 @@ from app.schemas.subscription import (
     BackgroundExecutionStatus,
     Subscription,
     SubscriptionStatus,
+    SubscriptionTaskType,
+    SubscriptionTeamRef,
     SubscriptionVisibility,
 )
 from app.services.subscription.helpers import resolve_prompt_template
@@ -43,6 +46,89 @@ logger = logging.getLogger(__name__)
 
 class BackgroundExecutionManager:
     """Manager class for BackgroundExecution operations."""
+
+    def _build_subscription_timeline_view(self, subscription: Kind) -> Dict[str, Any]:
+        """Build subscription display fields with tolerant fallback parsing."""
+        default_view: Dict[str, Any] = {
+            "display_name": subscription.name,
+            "task_type": SubscriptionTaskType.COLLECTION.value,
+            "team_ref": None,
+            "visibility": SubscriptionVisibility.PRIVATE,
+        }
+        try:
+            subscription_crd = Subscription.model_validate(subscription.json)
+            return {
+                "display_name": subscription_crd.spec.displayName,
+                "task_type": subscription_crd.spec.taskType.value,
+                "team_ref": subscription_crd.spec.teamRef,
+                "visibility": getattr(
+                    subscription_crd.spec,
+                    "visibility",
+                    SubscriptionVisibility.PRIVATE,
+                ),
+            }
+        except ValidationError as exc:
+            raw_json = subscription.json if isinstance(subscription.json, dict) else {}
+            spec = raw_json.get("spec")
+            if not isinstance(spec, dict):
+                logger.debug(
+                    "[SubscriptionExecution] Recover invalid subscription CRD without "
+                    "spec for timeline display: id=%s name=%s error=%s",
+                    subscription.id,
+                    subscription.name,
+                    exc,
+                )
+                return default_view
+
+            raw_display_name = spec.get("displayName")
+            display_name = (
+                raw_display_name.strip()
+                if isinstance(raw_display_name, str) and raw_display_name.strip()
+                else subscription.name
+            )
+
+            raw_task_type = spec.get("taskType", SubscriptionTaskType.COLLECTION.value)
+            try:
+                task_type = SubscriptionTaskType(raw_task_type).value
+            except Exception:
+                task_type = SubscriptionTaskType.COLLECTION.value
+
+            raw_visibility = spec.get(
+                "visibility", SubscriptionVisibility.PRIVATE.value
+            )
+            try:
+                visibility = SubscriptionVisibility(raw_visibility)
+            except Exception:
+                visibility = SubscriptionVisibility.PRIVATE
+
+            raw_team_ref = spec.get("teamRef")
+            team_ref = None
+            if isinstance(raw_team_ref, dict):
+                team_name = raw_team_ref.get("name")
+                team_namespace = raw_team_ref.get("namespace", "default")
+                if isinstance(team_name, str) and team_name:
+                    team_ref = SubscriptionTeamRef(
+                        name=team_name,
+                        namespace=(
+                            team_namespace
+                            if isinstance(team_namespace, str)
+                            else "default"
+                        ),
+                    )
+
+            logger.debug(
+                "[SubscriptionExecution] Recover invalid subscription CRD for timeline "
+                "display: id=%s name=%s error=%s",
+                subscription.id,
+                subscription.name,
+                exc,
+            )
+            return {
+                "display_name": display_name,
+                "task_type": task_type,
+                "team_ref": team_ref,
+                "visibility": visibility,
+            }
 
     def create_execution(
         self,
@@ -248,13 +334,13 @@ class BackgroundExecutionManager:
             .first()
         )
         if subscription:
-            subscription_crd = Subscription.model_validate(subscription.json)
+            subscription_view = self._build_subscription_timeline_view(subscription)
             exec_dict["subscription_name"] = subscription.name
-            exec_dict["subscription_display_name"] = subscription_crd.spec.displayName
-            exec_dict["task_type"] = subscription_crd.spec.taskType.value
+            exec_dict["subscription_display_name"] = subscription_view["display_name"]
+            exec_dict["task_type"] = subscription_view["task_type"]
 
             # Get team name from teamRef
-            team_ref = subscription_crd.spec.teamRef
+            team_ref = subscription_view["team_ref"]
             if team_ref:
                 team = (
                     db.query(Kind)
@@ -373,10 +459,10 @@ class BackgroundExecutionManager:
                 .first()
             )
             if subscription:
-                subscription_crd = Subscription.model_validate(subscription.json)
+                subscription_view = self._build_subscription_timeline_view(subscription)
                 # Check visibility field - PUBLIC means it's a public subscription
                 is_public_subscription = (
-                    subscription_crd.spec.visibility == SubscriptionVisibility.PUBLIC
+                    subscription_view["visibility"] == SubscriptionVisibility.PUBLIC
                 )
 
         # If querying a public subscription, allow access without user_id filter
@@ -465,16 +551,16 @@ class BackgroundExecutionManager:
         subscription_cache = {}
         team_refs = {}
         for subscription in subscriptions:
-            subscription_crd = Subscription.model_validate(subscription.json)
+            subscription_view = self._build_subscription_timeline_view(subscription)
             subscription_cache[subscription.id] = {
                 "name": subscription.name,
-                "display_name": subscription_crd.spec.displayName,
-                "task_type": subscription_crd.spec.taskType.value,
-                "team_ref": subscription_crd.spec.teamRef,
+                "display_name": subscription_view["display_name"],
+                "task_type": subscription_view["task_type"],
+                "team_ref": subscription_view["team_ref"],
                 "owner_user_id": subscription.user_id,  # Track subscription owner
             }
-            if subscription_crd.spec.teamRef:
-                team_ref = subscription_crd.spec.teamRef
+            if subscription_view["team_ref"]:
+                team_ref = subscription_view["team_ref"]
                 team_refs[(team_ref.name, team_ref.namespace)] = None
 
         # Batch load all related teams (fixes N+1 query issue)
@@ -561,13 +647,13 @@ class BackgroundExecutionManager:
             .first()
         )
         if subscription:
-            subscription_crd = Subscription.model_validate(subscription.json)
+            subscription_view = self._build_subscription_timeline_view(subscription)
             exec_dict["subscription_name"] = subscription.name
-            exec_dict["subscription_display_name"] = subscription_crd.spec.displayName
-            exec_dict["task_type"] = subscription_crd.spec.taskType.value
+            exec_dict["subscription_display_name"] = subscription_view["display_name"]
+            exec_dict["task_type"] = subscription_view["task_type"]
 
             # Get team name from teamRef
-            team_ref = subscription_crd.spec.teamRef
+            team_ref = subscription_view["team_ref"]
             if team_ref:
                 team = (
                     db.query(Kind)
