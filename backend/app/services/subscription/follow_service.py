@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import HTTPException
+from pydantic import ValidationError
 from sqlalchemy import and_, desc, func
 from sqlalchemy.orm import Session
 
@@ -46,6 +47,7 @@ from app.schemas.subscription import (
     SubscriptionInDB,
     SubscriptionInvitationResponse,
     SubscriptionInvitationsListResponse,
+    SubscriptionTaskType,
     SubscriptionTriggerType,
     SubscriptionVisibility,
 )
@@ -60,6 +62,79 @@ logger = logging.getLogger(__name__)
 
 class SubscriptionFollowService:
     """Service class for subscription follow operations."""
+
+    def _build_discover_view(self, subscription: Kind) -> Optional[Dict[str, Any]]:
+        """Build discover view data from CRD, with fallback for recoverable invalid data."""
+        try:
+            subscription_crd = Subscription.model_validate(subscription.json)
+            return {
+                "display_name": subscription_crd.spec.displayName,
+                "description": subscription_crd.spec.description,
+                "task_type": subscription_crd.spec.taskType,
+                "visibility": getattr(
+                    subscription_crd.spec,
+                    "visibility",
+                    SubscriptionVisibility.PRIVATE,
+                ),
+            }
+        except ValidationError as exc:
+            raw_view = self._build_discover_view_from_raw_json(subscription)
+            if raw_view is not None:
+                logger.warning(
+                    "[SubscriptionFollow] Recover invalid subscription CRD for discover: "
+                    "id=%s name=%s error=%s",
+                    subscription.id,
+                    subscription.name,
+                    exc,
+                )
+                return raw_view
+
+            logger.warning(
+                "[SubscriptionFollow] Skip invalid subscription CRD: id=%s name=%s "
+                "error=%s",
+                subscription.id,
+                subscription.name,
+                exc,
+            )
+            return None
+
+    def _build_discover_view_from_raw_json(
+        self, subscription: Kind
+    ) -> Optional[Dict[str, Any]]:
+        """Extract minimal discover fields from raw JSON when schema validation fails."""
+        raw_json = subscription.json if isinstance(subscription.json, dict) else {}
+        spec = raw_json.get("spec")
+        if not isinstance(spec, dict):
+            return None
+
+        raw_display_name = spec.get("displayName")
+        display_name = (
+            raw_display_name.strip()
+            if isinstance(raw_display_name, str) and raw_display_name.strip()
+            else subscription.name
+        )
+
+        raw_description = spec.get("description")
+        description = raw_description if isinstance(raw_description, str) else None
+
+        raw_visibility = spec.get("visibility", SubscriptionVisibility.PRIVATE.value)
+        try:
+            visibility = SubscriptionVisibility(raw_visibility)
+        except Exception:
+            visibility = SubscriptionVisibility.PRIVATE
+
+        raw_task_type = spec.get("taskType", SubscriptionTaskType.COLLECTION.value)
+        try:
+            task_type = SubscriptionTaskType(raw_task_type)
+        except Exception:
+            task_type = SubscriptionTaskType.COLLECTION
+
+        return {
+            "display_name": display_name,
+            "description": description,
+            "task_type": task_type,
+            "visibility": visibility,
+        }
 
     def follow_subscription(
         self,
@@ -1084,37 +1159,48 @@ class SubscriptionFollowService:
         )
 
         # Filter to public only
-        public_subscriptions = []
+        public_subscriptions: List[Dict[str, Any]] = []
         for sub in subscriptions:
-            sub_crd = Subscription.model_validate(sub.json)
-            visibility = getattr(
-                sub_crd.spec, "visibility", SubscriptionVisibility.PRIVATE
-            )
+            discover_view = self._build_discover_view(sub)
+            if discover_view is None:
+                continue
+
+            visibility = discover_view["visibility"]
             if visibility == SubscriptionVisibility.PUBLIC:
                 # Apply search filter
                 if search:
                     search_lower = search.lower()
-                    if search_lower not in sub_crd.spec.displayName.lower() and (
-                        not sub_crd.spec.description
-                        or search_lower not in sub_crd.spec.description.lower()
+                    display_name = discover_view["display_name"]
+                    description = discover_view["description"]
+                    if search_lower not in display_name.lower() and (
+                        not description or search_lower not in description.lower()
                     ):
                         continue
-                public_subscriptions.append(sub)
+                public_subscriptions.append(
+                    {
+                        "subscription": sub,
+                        "display_name": discover_view["display_name"],
+                        "description": discover_view["description"],
+                        "task_type": discover_view["task_type"],
+                    }
+                )
 
         # Get follower counts
         subscription_data = []
-        for sub in public_subscriptions:
+        for public_sub_data in public_subscriptions:
+            sub = public_sub_data["subscription"]
             followers_count = self.get_followers_count(db, subscription_id=sub.id)
             is_following_sub = self.is_following(
                 db, subscription_id=sub.id, user_id=user_id
             )
             owner = db.query(User).filter(User.id == sub.user_id).first()
-            sub_crd = Subscription.model_validate(sub.json)
 
             subscription_data.append(
                 {
                     "subscription": sub,
-                    "crd": sub_crd,
+                    "display_name": public_sub_data["display_name"],
+                    "description": public_sub_data["description"],
+                    "task_type": public_sub_data["task_type"],
                     "followers_count": followers_count,
                     "is_following": is_following_sub,
                     "owner_username": owner.user_name if owner else "",
@@ -1136,14 +1222,13 @@ class SubscriptionFollowService:
         items = []
         for data in paginated:
             sub = data["subscription"]
-            sub_crd = data["crd"]
             items.append(
                 DiscoverSubscriptionResponse(
                     id=sub.id,
                     name=sub.name,
-                    display_name=sub_crd.spec.displayName,
-                    description=sub_crd.spec.description,
-                    task_type=sub_crd.spec.taskType,
+                    display_name=data["display_name"],
+                    description=data["description"],
+                    task_type=data["task_type"],
                     owner_user_id=sub.user_id,
                     owner_username=data["owner_username"],
                     followers_count=data["followers_count"],
