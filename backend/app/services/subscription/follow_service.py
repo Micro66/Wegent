@@ -80,7 +80,7 @@ class SubscriptionFollowService:
         except ValidationError as exc:
             raw_view = self._build_discover_view_from_raw_json(subscription)
             if raw_view is not None:
-                logger.warning(
+                logger.debug(
                     "[SubscriptionFollow] Recover invalid subscription CRD for discover: "
                     "id=%s name=%s error=%s",
                     subscription.id,

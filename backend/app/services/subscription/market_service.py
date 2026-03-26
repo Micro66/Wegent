@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import HTTPException
+from pydantic import ValidationError
 from sqlalchemy import desc, func
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
@@ -28,6 +29,7 @@ from app.schemas.subscription import (
     RentalSubscriptionResponse,
     RentSubscriptionRequest,
     Subscription,
+    SubscriptionTaskType,
     SubscriptionTriggerType,
     SubscriptionVisibility,
 )
@@ -69,6 +71,171 @@ def _get_trigger_description(
 class SubscriptionMarketService:
     """Service class for Subscription Market operations."""
 
+    def _safe_trigger_type(self, raw_trigger_type: Any) -> SubscriptionTriggerType:
+        """Parse trigger type safely with cron fallback."""
+        try:
+            return SubscriptionTriggerType(raw_trigger_type)
+        except Exception:
+            return SubscriptionTriggerType.CRON
+
+    def _extract_raw_trigger_config(
+        self,
+        trigger_type: SubscriptionTriggerType,
+        raw_trigger: Any,
+    ) -> Dict[str, Any]:
+        """Extract trigger config from raw JSON for display fallback."""
+        trigger = raw_trigger if isinstance(raw_trigger, dict) else {}
+
+        if trigger_type == SubscriptionTriggerType.CRON:
+            cron = trigger.get("cron") if isinstance(trigger.get("cron"), dict) else {}
+            return {
+                "expression": cron.get("expression", ""),
+                "timezone": cron.get("timezone", "UTC"),
+            }
+
+        if trigger_type == SubscriptionTriggerType.INTERVAL:
+            interval = (
+                trigger.get("interval")
+                if isinstance(trigger.get("interval"), dict)
+                else {}
+            )
+            return {
+                "value": interval.get("value", 1),
+                "unit": interval.get("unit", "hours"),
+            }
+
+        if trigger_type == SubscriptionTriggerType.ONE_TIME:
+            one_time = (
+                trigger.get("one_time")
+                if isinstance(trigger.get("one_time"), dict)
+                else {}
+            )
+            return {
+                "execute_at": one_time.get("execute_at", ""),
+            }
+
+        if trigger_type == SubscriptionTriggerType.EVENT:
+            event = (
+                trigger.get("event") if isinstance(trigger.get("event"), dict) else {}
+            )
+            result = {"event_type": event.get("event_type", "webhook")}
+            git_push = event.get("git_push")
+            if isinstance(git_push, dict):
+                result["git_push"] = {
+                    "repository": git_push.get("repository", ""),
+                    "branch": git_push.get("branch"),
+                }
+            return result
+
+        return {}
+
+    def _build_market_view_from_raw_json(
+        self,
+        subscription: Kind,
+        *,
+        trigger_type: SubscriptionTriggerType,
+    ) -> Optional[Dict[str, Any]]:
+        """Build market display fields from raw JSON when schema validation fails."""
+        raw_json = subscription.json if isinstance(subscription.json, dict) else {}
+        spec = raw_json.get("spec")
+        if not isinstance(spec, dict):
+            return None
+
+        raw_display_name = spec.get("displayName")
+        display_name = (
+            raw_display_name.strip()
+            if isinstance(raw_display_name, str) and raw_display_name.strip()
+            else subscription.name
+        )
+
+        raw_description = spec.get("description")
+        description = raw_description if isinstance(raw_description, str) else None
+
+        raw_visibility = spec.get("visibility", SubscriptionVisibility.PRIVATE.value)
+        try:
+            visibility = SubscriptionVisibility(raw_visibility)
+        except Exception:
+            visibility = SubscriptionVisibility.PRIVATE
+
+        raw_task_type = spec.get("taskType", SubscriptionTaskType.COLLECTION.value)
+        try:
+            task_type = SubscriptionTaskType(raw_task_type)
+        except Exception:
+            task_type = SubscriptionTaskType.COLLECTION
+
+        model_ref_raw = spec.get("modelRef")
+        model_ref = None
+        if isinstance(model_ref_raw, dict):
+            name = model_ref_raw.get("name")
+            namespace = model_ref_raw.get("namespace", "default")
+            if isinstance(name, str) and name:
+                model_ref = {
+                    "name": name,
+                    "namespace": namespace if isinstance(namespace, str) else "default",
+                }
+
+        return {
+            "display_name": display_name,
+            "description": description,
+            "task_type": task_type,
+            "visibility": visibility,
+            "trigger_config": self._extract_raw_trigger_config(
+                trigger_type, spec.get("trigger")
+            ),
+            "model_ref": model_ref,
+        }
+
+    def _build_market_view(
+        self,
+        subscription: Kind,
+        *,
+        trigger_type: SubscriptionTriggerType,
+    ) -> Optional[Dict[str, Any]]:
+        """Build market display fields with tolerant fallback parsing."""
+        try:
+            subscription_crd = Subscription.model_validate(subscription.json)
+            model_ref = None
+            if subscription_crd.spec.modelRef:
+                model_ref = {
+                    "name": subscription_crd.spec.modelRef.name,
+                    "namespace": subscription_crd.spec.modelRef.namespace,
+                }
+
+            return {
+                "display_name": subscription_crd.spec.displayName,
+                "description": subscription_crd.spec.description,
+                "task_type": subscription_crd.spec.taskType,
+                "visibility": getattr(
+                    subscription_crd.spec,
+                    "visibility",
+                    SubscriptionVisibility.PRIVATE,
+                ),
+                "trigger_config": extract_trigger_config(subscription_crd.spec.trigger),
+                "model_ref": model_ref,
+            }
+        except ValidationError as exc:
+            fallback_view = self._build_market_view_from_raw_json(
+                subscription, trigger_type=trigger_type
+            )
+            if fallback_view is not None:
+                logger.debug(
+                    "[SubscriptionMarket] Recover invalid subscription CRD for market "
+                    "display: id=%s name=%s error=%s",
+                    subscription.id,
+                    subscription.name,
+                    exc,
+                )
+                return fallback_view
+
+            logger.warning(
+                "[SubscriptionMarket] Skip invalid subscription CRD: id=%s name=%s "
+                "error=%s",
+                subscription.id,
+                subscription.name,
+                exc,
+            )
+            return None
+
     def discover_market_subscriptions(
         self,
         db: Session,
@@ -104,11 +271,15 @@ class SubscriptionMarketService:
         # Filter for market visibility subscriptions
         market_subscriptions = []
         for sub in subscriptions:
-            subscription_crd = Subscription.model_validate(sub.json)
-            visibility = getattr(
-                subscription_crd.spec, "visibility", SubscriptionVisibility.PRIVATE
+            internal = (
+                sub.json.get("_internal", {}) if isinstance(sub.json, dict) else {}
             )
-            internal = sub.json.get("_internal", {})
+            trigger_type = self._safe_trigger_type(internal.get("trigger_type", "cron"))
+            market_view = self._build_market_view(sub, trigger_type=trigger_type)
+            if market_view is None:
+                continue
+
+            visibility = market_view["visibility"]
             market_whitelist_user_ids = get_market_whitelist_user_ids_from_internal(
                 internal
             )
@@ -118,18 +289,24 @@ class SubscriptionMarketService:
                 current_user_id=user_id,
                 whitelist_user_ids=market_whitelist_user_ids,
             ):
-                market_subscriptions.append(sub)
+                market_subscriptions.append(
+                    {
+                        "subscription": sub,
+                        "market_view": market_view,
+                        "trigger_type": trigger_type,
+                    }
+                )
 
         # Apply search filter
         if search:
             search_lower = search.lower()
             filtered = []
-            for sub in market_subscriptions:
-                subscription_crd = Subscription.model_validate(sub.json)
-                display_name = subscription_crd.spec.displayName.lower()
-                description = (subscription_crd.spec.description or "").lower()
+            for market_sub in market_subscriptions:
+                market_view = market_sub["market_view"]
+                display_name = market_view["display_name"].lower()
+                description = (market_view["description"] or "").lower()
                 if search_lower in display_name or search_lower in description:
-                    filtered.append(sub)
+                    filtered.append(market_sub)
             market_subscriptions = filtered
 
         # Get user's rented subscriptions for is_rented check
@@ -137,27 +314,28 @@ class SubscriptionMarketService:
 
         # Convert to response and collect rental counts
         result_items = []
-        for sub in market_subscriptions:
-            subscription_crd = Subscription.model_validate(sub.json)
-            internal = sub.json.get("_internal", {})
+        for market_sub in market_subscriptions:
+            sub = market_sub["subscription"]
+            market_view = market_sub["market_view"]
+            trigger_type = market_sub["trigger_type"]
+            internal = (
+                sub.json.get("_internal", {}) if isinstance(sub.json, dict) else {}
+            )
 
             # Get owner username
             owner = db.query(User).filter(User.id == sub.user_id).first()
             owner_username = owner.user_name if owner else "Unknown"
 
-            trigger_type = SubscriptionTriggerType(internal.get("trigger_type", "cron"))
-            trigger_config = extract_trigger_config(subscription_crd.spec.trigger)
-
             result_items.append(
                 MarketSubscriptionDetail(
                     id=sub.id,
                     name=sub.name,
-                    display_name=subscription_crd.spec.displayName,
-                    description=subscription_crd.spec.description,
-                    task_type=subscription_crd.spec.taskType,
+                    display_name=market_view["display_name"],
+                    description=market_view["description"],
+                    task_type=market_view["task_type"],
                     trigger_type=trigger_type,
                     trigger_description=_get_trigger_description(
-                        trigger_type, trigger_config
+                        trigger_type, market_view["trigger_config"]
                     ),
                     owner_user_id=sub.user_id,
                     owner_username=owner_username,
@@ -215,17 +393,23 @@ class SubscriptionMarketService:
         if not subscription:
             raise HTTPException(status_code=404, detail="Subscription not found")
 
-        subscription_crd = Subscription.model_validate(subscription.json)
-        visibility = getattr(
-            subscription_crd.spec, "visibility", SubscriptionVisibility.PRIVATE
+        internal = (
+            subscription.json.get("_internal", {})
+            if isinstance(subscription.json, dict)
+            else {}
         )
+        trigger_type = self._safe_trigger_type(internal.get("trigger_type", "cron"))
+        market_view = self._build_market_view(subscription, trigger_type=trigger_type)
+        if market_view is None:
+            raise HTTPException(status_code=404, detail="Subscription not found")
+
+        visibility = market_view["visibility"]
 
         if visibility != SubscriptionVisibility.MARKET:
             raise HTTPException(
                 status_code=404, detail="Subscription not found in market"
             )
 
-        internal = subscription.json.get("_internal", {})
         market_whitelist_user_ids = get_market_whitelist_user_ids_from_internal(
             internal
         )
@@ -246,17 +430,16 @@ class SubscriptionMarketService:
         # Check if user has rented this subscription
         rented_source_ids = self._get_user_rented_source_ids(db, user_id)
 
-        trigger_type = SubscriptionTriggerType(internal.get("trigger_type", "cron"))
-        trigger_config = extract_trigger_config(subscription_crd.spec.trigger)
-
         return MarketSubscriptionDetail(
             id=subscription.id,
             name=subscription.name,
-            display_name=subscription_crd.spec.displayName,
-            description=subscription_crd.spec.description,
-            task_type=subscription_crd.spec.taskType,
+            display_name=market_view["display_name"],
+            description=market_view["description"],
+            task_type=market_view["task_type"],
             trigger_type=trigger_type,
-            trigger_description=_get_trigger_description(trigger_type, trigger_config),
+            trigger_description=_get_trigger_description(
+                trigger_type, market_view["trigger_config"]
+            ),
             owner_user_id=subscription.user_id,
             owner_username=owner_username,
             rental_count=internal.get("rental_count", 0),
@@ -307,17 +490,25 @@ class SubscriptionMarketService:
         if not source:
             raise HTTPException(status_code=404, detail="Source subscription not found")
 
-        source_crd = Subscription.model_validate(source.json)
-        visibility = getattr(
-            source_crd.spec, "visibility", SubscriptionVisibility.PRIVATE
+        source_internal = (
+            source.json.get("_internal", {}) if isinstance(source.json, dict) else {}
         )
+        source_trigger_type = self._safe_trigger_type(
+            source_internal.get("trigger_type", "cron")
+        )
+        source_view = self._build_market_view(source, trigger_type=source_trigger_type)
+        if source_view is None:
+            raise HTTPException(
+                status_code=400, detail="Source subscription is invalid"
+            )
+
+        visibility = source_view["visibility"]
 
         if visibility != SubscriptionVisibility.MARKET:
             raise HTTPException(
                 status_code=400, detail="Source subscription is not available in market"
             )
 
-        source_internal = source.json.get("_internal", {})
         market_whitelist_user_ids = get_market_whitelist_user_ids_from_internal(
             source_internal
         )
@@ -403,7 +594,7 @@ class SubscriptionMarketService:
 
         spec = SubscriptionSpec(
             displayName=request.display_name,
-            taskType=source_crd.spec.taskType,  # Copy task type from source
+            taskType=source_view["task_type"],  # Copy task type from source
             visibility=SubscriptionVisibility.PRIVATE,  # Rentals are always private
             trigger=trigger,
             teamRef=SubscriptionTeamRef(
@@ -411,7 +602,7 @@ class SubscriptionMarketService:
             ),  # Placeholder
             promptTemplate="__rental_placeholder__",  # Placeholder
             enabled=True,
-            description=f"Rental of: {source_crd.spec.displayName}",
+            description=f"Rental of: {source_view['display_name']}",
             sourceSubscriptionRef=SourceSubscriptionRef(
                 id=source.id,
                 name=source.name,
@@ -451,7 +642,7 @@ class SubscriptionMarketService:
             "is_rental": True,
             "source_subscription_id": source.id,
             "source_subscription_name": source.name,
-            "source_subscription_display_name": source_crd.spec.displayName,
+            "source_subscription_display_name": source_view["display_name"],
             "source_owner_username": source_owner_username,
         }
 
@@ -481,7 +672,7 @@ class SubscriptionMarketService:
             namespace="default",
             source_subscription_id=source.id,
             source_subscription_name=source.name,
-            source_subscription_display_name=source_crd.spec.displayName,
+            source_subscription_display_name=source_view["display_name"],
             source_owner_user_id=source.user_id,
             source_owner_username=source_owner_username,
             trigger_type=request.trigger_type,
@@ -543,8 +734,15 @@ class SubscriptionMarketService:
         # Convert to response
         result = []
         for rental in rentals:
-            rental_crd = Subscription.model_validate(rental.json)
-            internal = rental.json.get("_internal", {})
+            internal = (
+                rental.json.get("_internal", {})
+                if isinstance(rental.json, dict)
+                else {}
+            )
+            trigger_type = self._safe_trigger_type(internal.get("trigger_type", "cron"))
+            rental_view = self._build_market_view(rental, trigger_type=trigger_type)
+            if rental_view is None:
+                continue
 
             # Parse execution times
             next_execution_time = None
@@ -565,14 +763,6 @@ class SubscriptionMarketService:
                 except (ValueError, TypeError):
                     pass
 
-            # Get model_ref
-            model_ref = None
-            if rental_crd.spec.modelRef:
-                model_ref = {
-                    "name": rental_crd.spec.modelRef.name,
-                    "namespace": rental_crd.spec.modelRef.namespace,
-                }
-
             # Get source owner info
             source_id = internal.get("source_subscription_id")
             source_owner_user_id = 0
@@ -585,7 +775,7 @@ class SubscriptionMarketService:
                 RentalSubscriptionResponse(
                     id=rental.id,
                     name=rental.name,
-                    display_name=rental_crd.spec.displayName,
+                    display_name=rental_view["display_name"],
                     namespace=rental.namespace,
                     source_subscription_id=internal.get("source_subscription_id", 0),
                     source_subscription_name=internal.get(
@@ -596,11 +786,9 @@ class SubscriptionMarketService:
                     ),
                     source_owner_user_id=source_owner_user_id,
                     source_owner_username=internal.get("source_owner_username", ""),
-                    trigger_type=SubscriptionTriggerType(
-                        internal.get("trigger_type", "cron")
-                    ),
-                    trigger_config=extract_trigger_config(rental_crd.spec.trigger),
-                    model_ref=model_ref,
+                    trigger_type=trigger_type,
+                    trigger_config=rental_view["trigger_config"],
+                    model_ref=rental_view["model_ref"],
                     enabled=internal.get("enabled", True),
                     last_execution_time=last_execution_time,
                     last_execution_status=internal.get("last_execution_status"),
