@@ -30,7 +30,7 @@ import { parseUTCDate } from '@/lib/utils'
 import type { SubscriptionOptionsSectionProps } from './types'
 
 // Minimum interval in minutes
-const MIN_INTERVAL_MINUTES = 20
+const MIN_INTERVAL_MINUTES = 15
 
 /**
  * Validate interval trigger configuration
@@ -45,7 +45,7 @@ export function validateIntervalTrigger(
     const value = (triggerConfig.value as number) || 1
     const unit = (triggerConfig.unit as string) || 'hours'
     if (unit === 'minutes' && value < MIN_INTERVAL_MINUTES) {
-      return t('interval_min_error', { min: MIN_INTERVAL_MINUTES })
+      return t('interval_min_error').replace('{{min}}', String(MIN_INTERVAL_MINUTES))
     }
   }
   return null

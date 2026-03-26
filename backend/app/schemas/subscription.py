@@ -100,9 +100,12 @@ class IntervalTriggerConfig(BaseModel):
 
     @model_validator(mode="after")
     def validate_minimum_interval(self):
-        """Validate minimum interval is 20 minutes."""
-        if self.unit == "minutes" and self.value < 20:
-            raise ValueError("Interval must be at least 20 minutes")
+        """Validate minimum interval is at least SUBSCRIPTION_MIN_INTERVAL_MINUTES (default 15)."""
+        from app.core.config import settings
+
+        min_interval = settings.SUBSCRIPTION_MIN_INTERVAL_MINUTES
+        if self.unit == "minutes" and self.value < min_interval:
+            raise ValueError(f"Interval must be at least {min_interval} minutes")
         return self
 
 
@@ -510,6 +513,13 @@ class SubscriptionInDB(SubscriptionBase):
     rental_count: int = Field(
         0, description="Number of rentals (for market subscriptions)"
     )
+    # Trigger config validation status
+    trigger_config_valid: bool = Field(
+        True, description="Whether the trigger configuration is valid"
+    )
+    trigger_config_error: Optional[str] = Field(
+        None, description="Error message if trigger config is invalid"
+    )
     created_at: datetime
     updated_at: datetime
 
@@ -522,6 +532,9 @@ class SubscriptionListResponse(BaseModel):
 
     total: int
     items: List[SubscriptionInDB]
+    invalid_schedule_count: int = Field(
+        0, description="Number of subscriptions with invalid schedule configuration"
+    )
 
 
 # Background Execution schemas

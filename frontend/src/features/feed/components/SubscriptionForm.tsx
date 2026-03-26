@@ -9,7 +9,7 @@
  * Refactored to use sub-components for better maintainability.
  */
 import { useCallback, useEffect, useState } from 'react'
-import { Copy, Check, Terminal } from 'lucide-react'
+import { Copy, Check, Terminal, AlertTriangle } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
@@ -971,6 +971,24 @@ export function SubscriptionForm({
               devicesLoading={devicesLoading}
               isRental={isRental}
             />
+          )}
+
+          {/* Invalid Schedule Warning - Only show when editing an invalid subscription */}
+          {isEditing && subscription && subscription.trigger_config_valid === false && (
+            <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3">
+              <div className="flex items-start gap-3">
+                <AlertTriangle className="h-5 w-5 text-amber-600 flex-shrink-0 mt-0.5" />
+                <div className="flex-1">
+                  <p className="text-sm font-medium text-amber-800">
+                    {t('invalid_schedule_edit_warning_title')}
+                  </p>
+                  <p className="text-xs text-amber-700 mt-1">
+                    {subscription.trigger_config_error || t('invalid_schedule_edit_warning_desc')}
+                  </p>
+                  <p className="text-xs text-amber-700 mt-1">{t('invalid_schedule_edit_action')}</p>
+                </div>
+              </div>
+            </div>
           )}
 
           {/* Section 3: Subscription Options */}
