@@ -104,6 +104,7 @@
   "validation_team_required": "请选择智能体",
   "validation_prompt_required": "Prompt 模板不能为空",
   "validation_model_required": "所选智能体未配置模型，请选择一个模型",
+  "interval_min_error": "间隔时间不能少于 {{min}} 分钟",
   "next_execution": "下次执行",
   "executions": "执行次数",
   "view_history": "查看历史",

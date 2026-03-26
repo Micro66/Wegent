@@ -13,7 +13,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from app.schemas.kind import ModelRef
 
@@ -97,6 +97,13 @@ class IntervalTriggerConfig(BaseModel):
 
     value: int = Field(..., description="Interval value")
     unit: str = Field(..., description="Interval unit: 'minutes', 'hours', 'days'")
+
+    @model_validator(mode="after")
+    def validate_minimum_interval(self):
+        """Validate minimum interval is 20 minutes."""
+        if self.unit == "minutes" and self.value < 20:
+            raise ValueError("Interval must be at least 20 minutes")
+        return self
 
 
 class OneTimeTriggerConfig(BaseModel):

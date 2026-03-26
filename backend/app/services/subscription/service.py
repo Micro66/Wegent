@@ -105,6 +105,52 @@ class SubscriptionService:
     def __init__(self):
         self.execution_manager = background_execution_manager
 
+    def _validate_trigger_config(
+        self,
+        trigger_type: SubscriptionTriggerType,
+        trigger_config: Dict[str, Any],
+    ) -> None:
+        """Validate trigger configuration, raises HTTPException if invalid."""
+        if trigger_type == SubscriptionTriggerType.INTERVAL:
+            value = trigger_config.get("value", 1)
+            unit = trigger_config.get("unit", "hours")
+            if unit == "minutes" and value < 20:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Interval must be at least 20 minutes",
+                )
+        elif trigger_type == SubscriptionTriggerType.CRON:
+            # Validate cron expression minimum interval
+            try:
+                from croniter import croniter
+
+                expr = trigger_config.get("expression", "")
+                if expr:
+                    # Parse cron expression to check if it's too frequent
+                    # e.g., */5 * * * * means every 5 minutes
+                    parts = expr.strip().split()
+                    if len(parts) == 5:
+                        minute_part = parts[0]
+                        # Check for patterns like */N where N < 20
+                        if minute_part.startswith("*/"):
+                            try:
+                                interval = int(minute_part[2:])
+                                if interval < 20:
+                                    raise HTTPException(
+                                        status_code=400,
+                                        detail="Cron interval must be at least 20 minutes",
+                                    )
+                            except ValueError:
+                                pass
+                        # Check for single digit minutes (0-19) which means every hour at that minute
+                        # This is acceptable, not too frequent
+            except ImportError:
+                pass
+            except HTTPException:
+                raise
+            except Exception:
+                pass
+
     def create_subscription(
         self,
         db: Session,
@@ -113,6 +159,12 @@ class SubscriptionService:
         user_id: int,
     ) -> SubscriptionInDB:
         """Create a new Subscription configuration."""
+        # Validate trigger configuration
+        self._validate_trigger_config(
+            subscription_in.trigger_type,
+            subscription_in.trigger_config,
+        )
+
         # Validate subscription name uniqueness
         existing = (
             db.query(Kind)
@@ -562,6 +614,14 @@ class SubscriptionService:
                 "trigger_config",
                 extract_trigger_config(subscription_crd.spec.trigger),
             )
+
+            # Validate trigger configuration
+            trigger_type_enum = (
+                trigger_type
+                if isinstance(trigger_type, SubscriptionTriggerType)
+                else SubscriptionTriggerType(trigger_type)
+            )
+            self._validate_trigger_config(trigger_type_enum, trigger_config)
 
             # Generate new webhook token if switching to event trigger
             if (

@@ -213,11 +213,16 @@ def build_trigger_config(
             ),
         )
     elif trigger_type_enum == SubscriptionTriggerType.INTERVAL:
+        value = trigger_config.get("value", 1)
+        unit = trigger_config.get("unit", "hours")
+        # Enforce minimum interval of 20 minutes
+        if unit == "minutes" and value < 20:
+            value = 20
         return SubscriptionTriggerConfig(
             type=trigger_type_enum,
             interval=IntervalTriggerConfig(
-                value=trigger_config.get("value", 1),
-                unit=trigger_config.get("unit", "hours"),
+                value=value,
+                unit=unit,
             ),
         )
     elif trigger_type_enum == SubscriptionTriggerType.ONE_TIME:

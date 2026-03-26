@@ -52,6 +52,7 @@ import {
   SubscriptionOptionsSection,
   NotificationSection,
   type SubscriptionModel,
+  validateIntervalTrigger,
 } from './subscription-form'
 
 const resolveGitType = (gitDomain?: string): GitRepoInfo['type'] => {
@@ -703,6 +704,13 @@ export function SubscriptionForm({
         toast.error(t('validation_model_required'))
         return
       }
+    }
+
+    // Validate interval trigger minimum 20 minutes
+    const intervalError = validateIntervalTrigger(triggerType, triggerConfig, t)
+    if (intervalError) {
+      toast.error(intervalError)
+      return
     }
 
     setSubmitting(true)

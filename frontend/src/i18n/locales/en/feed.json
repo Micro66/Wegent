@@ -104,6 +104,7 @@
   "validation_team_required": "Please select an agent",
   "validation_prompt_required": "Prompt template is required",
   "validation_model_required": "The selected agent has no model configured. Please select a model",
+  "interval_min_error": "Interval must be at least {{min}} minutes",
   "next_execution": "Next run",
   "executions": "Runs",
   "view_history": "View History",
