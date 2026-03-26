@@ -92,6 +92,7 @@ def get_bot_ids_from_team(db: Session, team: Kind) -> List[int]:
     bot_ids = []
 
     for member in team_crd.spec.members:
+        # First try to find bot with same user_id (user's own bot)
         bot = (
             db.query(Kind)
             .filter(
@@ -103,6 +104,18 @@ def get_bot_ids_from_team(db: Session, team: Kind) -> List[int]:
             )
             .first()
         )
+        # If not found, try to find in the same namespace (shared bot)
+        if not bot:
+            bot = (
+                db.query(Kind)
+                .filter(
+                    Kind.kind == "Bot",
+                    Kind.name == member.botRef.name,
+                    Kind.namespace == member.botRef.namespace,
+                    Kind.is_active,
+                )
+                .first()
+            )
         if bot:
             bot_ids.append(bot.id)
 

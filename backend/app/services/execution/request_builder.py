@@ -385,6 +385,7 @@ class TaskRequestBuilder:
 
         first_member = team_crd.spec.members[0]
 
+        # Try user's own bot first
         bot = (
             self.db.query(Kind)
             .filter(
@@ -396,6 +397,19 @@ class TaskRequestBuilder:
             )
             .first()
         )
+
+        # If not found, try shared bot in the same namespace
+        if not bot:
+            bot = (
+                self.db.query(Kind)
+                .filter(
+                    Kind.kind == "Bot",
+                    Kind.name == first_member.botRef.name,
+                    Kind.namespace == first_member.botRef.namespace,
+                    Kind.is_active,
+                )
+                .first()
+            )
 
         if not bot:
             logger.error(
@@ -776,7 +790,7 @@ class TaskRequestBuilder:
             )
             return [], [], [], {}
 
-        # Query Ghost
+        # Query Ghost (try user's own first, then shared in namespace)
         ghost = (
             self.db.query(Kind)
             .filter(
@@ -788,6 +802,18 @@ class TaskRequestBuilder:
             )
             .first()
         )
+
+        if not ghost:
+            ghost = (
+                self.db.query(Kind)
+                .filter(
+                    Kind.kind == "Ghost",
+                    Kind.name == bot_crd.spec.ghostRef.name,
+                    Kind.namespace == bot_crd.spec.ghostRef.namespace,
+                    Kind.is_active == True,
+                )
+                .first()
+            )
 
         if not ghost or not ghost.json:
             logger.warning(
@@ -1214,7 +1240,7 @@ class TaskRequestBuilder:
             if i == 0:
                 bot = first_bot
             else:
-                # Query additional bots
+                # Query additional bots (try user's own first, then shared in namespace)
                 bot = (
                     self.db.query(Kind)
                     .filter(
@@ -1226,6 +1252,17 @@ class TaskRequestBuilder:
                     )
                     .first()
                 )
+                if not bot:
+                    bot = (
+                        self.db.query(Kind)
+                        .filter(
+                            Kind.kind == "Bot",
+                            Kind.name == member.botRef.name,
+                            Kind.namespace == member.botRef.namespace,
+                            Kind.is_active,
+                        )
+                        .first()
+                    )
 
             if not bot:
                 continue
@@ -1246,6 +1283,7 @@ class TaskRequestBuilder:
             ghost_skills = []
 
             if bot_spec and bot_spec.ghostRef:
+                # Try user's own ghost first, then shared in namespace
                 ghost = (
                     self.db.query(Kind)
                     .filter(
@@ -1257,6 +1295,17 @@ class TaskRequestBuilder:
                     )
                     .first()
                 )
+                if not ghost:
+                    ghost = (
+                        self.db.query(Kind)
+                        .filter(
+                            Kind.kind == "Ghost",
+                            Kind.name == bot_spec.ghostRef.name,
+                            Kind.namespace == bot_spec.ghostRef.namespace,
+                            Kind.is_active,
+                        )
+                        .first()
+                    )
                 if ghost and ghost.json:
                     ghost_crd = Ghost.model_validate(ghost.json)
                     ghost_system_prompt = ghost_crd.spec.systemPrompt or ""
@@ -1412,7 +1461,7 @@ class TaskRequestBuilder:
         bot_crd = Bot.model_validate(bot.json)
 
         if bot_crd.spec and bot_crd.spec.ghostRef:
-            # Query Ghost
+            # Query Ghost (try user's own first, then shared in namespace)
             ghost = (
                 self.db.query(Kind)
                 .filter(
@@ -1424,6 +1473,17 @@ class TaskRequestBuilder:
                 )
                 .first()
             )
+            if not ghost:
+                ghost = (
+                    self.db.query(Kind)
+                    .filter(
+                        Kind.kind == "Ghost",
+                        Kind.name == bot_crd.spec.ghostRef.name,
+                        Kind.namespace == bot_crd.spec.ghostRef.namespace,
+                        Kind.is_active,
+                    )
+                    .first()
+                )
 
             if ghost and ghost.json:
                 ghost_crd = Ghost.model_validate(ghost.json)

@@ -89,6 +89,7 @@ def get_team_first_bot_shell_type(db: Session, team: Kind) -> str:
         return ""
 
     first_member = team_crd.spec.members[0]
+    # First try user's own bot
     bot = (
         db.query(Kind)
         .filter(
@@ -100,6 +101,18 @@ def get_team_first_bot_shell_type(db: Session, team: Kind) -> str:
         )
         .first()
     )
+    # If not found, try shared bot in the same namespace
+    if not bot:
+        bot = (
+            db.query(Kind)
+            .filter(
+                Kind.kind == "Bot",
+                Kind.name == first_member.botRef.name,
+                Kind.namespace == first_member.botRef.namespace,
+                Kind.is_active == True,
+            )
+            .first()
+        )
 
     if bot:
         return get_shell_type(db, bot, team.user_id)
@@ -130,7 +143,7 @@ def is_deep_research_protocol(db: Session, team: Kind) -> bool:
 
     first_member = team_crd.spec.members[0]
 
-    # Get first bot
+    # Get first bot (try user's own first, then shared in namespace)
     bot = (
         db.query(Kind)
         .filter(
@@ -142,6 +155,17 @@ def is_deep_research_protocol(db: Session, team: Kind) -> bool:
         )
         .first()
     )
+    if not bot:
+        bot = (
+            db.query(Kind)
+            .filter(
+                Kind.kind == "Bot",
+                Kind.name == first_member.botRef.name,
+                Kind.namespace == first_member.botRef.namespace,
+                Kind.is_active == True,
+            )
+            .first()
+        )
 
     if not bot:
         return False
@@ -150,7 +174,7 @@ def is_deep_research_protocol(db: Session, team: Kind) -> bool:
     if not bot_crd.spec or not bot_crd.spec.modelRef:
         return False
 
-    # Get model from bot's modelRef
+    # Get model from bot's modelRef (try user's own, then shared, then public)
     model = (
         db.query(Kind)
         .filter(
@@ -163,7 +187,20 @@ def is_deep_research_protocol(db: Session, team: Kind) -> bool:
         .first()
     )
 
-    # If not found in user's models, try public models (user_id = 0)
+    # If not found, try shared model in the same namespace
+    if not model:
+        model = (
+            db.query(Kind)
+            .filter(
+                Kind.kind == "Model",
+                Kind.name == bot_crd.spec.modelRef.name,
+                Kind.namespace == bot_crd.spec.modelRef.namespace,
+                Kind.is_active == True,
+            )
+            .first()
+        )
+
+    # If not found, try public models (user_id = 0)
     if not model:
         model = (
             db.query(Kind)
