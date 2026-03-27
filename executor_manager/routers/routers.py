@@ -18,6 +18,7 @@ import os
 import time
 import uuid
 from typing import Any, Dict, Optional
+from urllib.parse import urlparse
 
 import httpx
 from fastapi import APIRouter, Body, FastAPI, HTTPException, Request, Response
@@ -906,15 +907,16 @@ async def validate_image(request: ValidateImageRequest, http_request: Request):
     # Build callback URL from environment variables
     callback_host = os.getenv("CALLBACK_HOST", get_host_ip())
     callback_port = os.getenv("CALLBACK_PORT", "8001")
-    # Remove http:// prefix if present to avoid double prefix
-    if callback_host.startswith("http://"):
-        callback_host = callback_host[7:]
-    elif callback_host.startswith("https://"):
-        callback_host = callback_host[8:]
-    # Remove port if already in host
-    if ":" in callback_host:
-        callback_host = callback_host.rsplit(":", 1)[0]
-    callback_url = f"http://{callback_host}:{callback_port}/executor-manager/callback"
+    parsed = urlparse(
+        callback_host if "://" in callback_host else f"http://{callback_host}"
+    )
+    callback_scheme = parsed.scheme or "http"
+    callback_hostname = parsed.hostname or callback_host
+    callback_effective_port = parsed.port or callback_port
+    callback_url = (
+        f"{callback_scheme}://{callback_hostname}:{callback_effective_port}"
+        f"/executor-manager/callback"
+    )
 
     validation_task = {
         "model": "ImageValidator",  # Dummy model for validation agent

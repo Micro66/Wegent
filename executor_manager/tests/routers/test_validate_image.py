@@ -39,6 +39,35 @@ async def test_validate_image_schedules_background_submission(mocker):
 
 
 @pytest.mark.asyncio
+async def test_validate_image_preserves_https_callback_scheme(mocker):
+    request = routers.ValidateImageRequest(
+        image="ghcr.io/wecode-ai/wegent-executor:test",
+        shell_type="ClaudeCode",
+        user_name="tester",
+        shell_name="shell-a",
+        validation_id="vid-https",
+    )
+    http_request = SimpleNamespace(client=SimpleNamespace(host="127.0.0.1"))
+
+    mocker.patch.dict(
+        routers.os.environ,
+        {"CALLBACK_HOST": "https://callback.example.com", "CALLBACK_PORT": "8443"},
+        clear=False,
+    )
+    mocker.patch.object(routers, "_cleanup_stale_validation_entries")
+    mocked_bg = mocker.patch.object(
+        routers, "_run_validation_task_in_background", new_callable=mocker.AsyncMock
+    )
+    mocker.patch.object(routers.asyncio, "create_task")
+
+    await routers.validate_image(request, http_request)
+
+    validation_task = mocked_bg.call_args.args[0]
+    callback_url = validation_task["metadata"]["callback_url"]
+    assert callback_url == "https://callback.example.com:8443/executor-manager/callback"
+
+
+@pytest.mark.asyncio
 async def test_run_validation_task_in_background_uses_to_thread(mocker):
     validation_task = {"metadata": {"task_id": 123}}
     mocked_to_thread = mocker.patch.object(

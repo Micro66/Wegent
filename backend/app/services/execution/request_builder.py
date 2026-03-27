@@ -58,10 +58,9 @@ class TaskRequestBuilder:
             db: Database session
         """
         self.db = db
-        # Cache shell_type to avoid repeated database queries
-        self._cached_shell_type: str | None = None
-        # Cache shell info (shell_type + base_image) to avoid repeated database queries
-        self._cached_shell_info: dict | None = None
+        # Cache shell info by (user_id, namespace, shell_name)
+        # to avoid repeated database queries while keeping per-shell isolation.
+        self._cached_shell_info: dict[tuple[int, str, str], dict] = {}
 
     def build(
         self,
@@ -673,24 +672,26 @@ class TaskRequestBuilder:
         Returns:
             dict: {"shell_type": str, "base_image": Optional[str]}
         """
-        # Return cached value if available
-        if self._cached_shell_info is not None:
-            return self._cached_shell_info
+        bot_crd = Bot.model_validate(bot.json)
 
         # Default values
         shell_type = "Chat"
         base_image = None
 
-        bot_crd = Bot.model_validate(bot.json)
-
         if not (bot_crd.spec and bot_crd.spec.shellRef):
-            self._cached_shell_info = {
+            return {
                 "shell_type": shell_type,
                 "base_image": base_image,
             }
-            return self._cached_shell_info
 
         shell_ref = bot_crd.spec.shellRef
+        cache_key = (user_id, shell_ref.namespace, shell_ref.name)
+
+        # Return cached value if available
+        cached = self._cached_shell_info.get(cache_key)
+        if cached is not None:
+            return cached
+
         shell = None
 
         # 1. Query user's private shell first
@@ -750,11 +751,12 @@ class TaskRequestBuilder:
             base_image,
         )
 
-        self._cached_shell_info = {
+        resolved_shell_info = {
             "shell_type": shell_type,
             "base_image": base_image,
         }
-        return self._cached_shell_info
+        self._cached_shell_info[cache_key] = resolved_shell_info
+        return resolved_shell_info
 
     # =========================================================================
     # Skill Resolution (from ChatConfigBuilder)
