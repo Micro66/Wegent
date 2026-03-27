@@ -288,16 +288,9 @@ export function useChatStreamHandlers({
     if (taskIdToStop && taskIdToStop > 0) {
       const team =
         typeof selectedTaskDetail?.team === 'object' ? selectedTaskDetail.team : undefined
-      // Pass task subtasks as fallback for non-streaming RUNNING window
-      await contextStopStream(taskIdToStop, selectedTaskDetail?.subtasks, team)
+      await contextStopStream(taskIdToStop, undefined, team)
     }
-  }, [
-    currentDisplayTaskId,
-    pendingTaskId,
-    contextStopStream,
-    selectedTaskDetail?.team,
-    selectedTaskDetail?.subtasks,
-  ])
+  }, [currentDisplayTaskId, pendingTaskId, contextStopStream, selectedTaskDetail?.team])
 
   // Group chat handlers
   const handleNewMessages = useCallback(
