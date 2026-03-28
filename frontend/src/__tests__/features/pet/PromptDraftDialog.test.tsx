@@ -14,7 +14,7 @@ jest.mock('@/hooks/useTranslation', () => ({
   }),
 }))
 
-jest.mock('@/features/settings/components/prompt-fine-tune/PromptFineTuneDialog', () => ({
+jest.mock('@/features/prompt-tune/components/PromptFineTuneDialog', () => ({
   __esModule: true,
   default: () => null,
 }))

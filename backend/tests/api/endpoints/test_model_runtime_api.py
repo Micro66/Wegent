@@ -13,7 +13,7 @@ def _auth_header(token: str) -> dict[str, str]:
 
 def test_create_stateless_response_success(test_client: TestClient, test_token: str):
     with patch(
-        "app.api.endpoints.adapter.model_runtime.chat_shell_model_service.complete_text",
+        "app.api.endpoints.adapter.model_runtime.stateless_runtime_service.complete_text",
         new=AsyncMock(return_value="hello from runtime"),
     ):
         response = test_client.post(
@@ -37,7 +37,7 @@ def test_create_stateless_response_accepts_string_input(
     test_client: TestClient, test_token: str
 ):
     with patch(
-        "app.api.endpoints.adapter.model_runtime.chat_shell_model_service.complete_text",
+        "app.api.endpoints.adapter.model_runtime.stateless_runtime_service.complete_text",
         new=AsyncMock(return_value="ok"),
     ) as mock_complete:
         response = test_client.post(
@@ -52,6 +52,4 @@ def test_create_stateless_response_accepts_string_input(
 
     assert response.status_code == 200
     first_call = mock_complete.await_args_list[0].kwargs
-    assert first_call["input_messages"] == [
-        {"role": "user", "content": "direct question"}
-    ]
+    assert first_call["input_data"] == "direct question"

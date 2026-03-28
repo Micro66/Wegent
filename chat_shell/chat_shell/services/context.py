@@ -294,7 +294,11 @@ class ChatContext:
             len(history),
             history_limit,
         )
-        if not history and request_history:
+        if (
+            not history
+            and request_history
+            and (history_limit is None or history_limit > 0)
+        ):
             logger.info(
                 "[CHAT_CONTEXT] Falling back to request-provided history: task_id=%d, "
                 "subtask_id=%d, count=%d",

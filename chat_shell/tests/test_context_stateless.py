@@ -45,3 +45,26 @@ def test_build_extra_tools_skips_builtin_tools_when_enable_tools_false():
     extra_tools = context._build_extra_tools(kb_result, [], ([], []))
 
     assert extra_tools == []
+
+
+@pytest.mark.asyncio
+async def test_load_chat_history_does_not_restore_request_history_when_limit_zero(
+    monkeypatch,
+):
+    async def _mock_get_chat_history(*args, **kwargs):
+        del args, kwargs
+        return []
+
+    monkeypatch.setattr("chat_shell.history.get_chat_history", _mock_get_chat_history)
+
+    request = ExecutionRequest(
+        stateless=False,
+        history_limit=0,
+        history=[{"role": "user", "content": "should stay hidden"}],
+        prompt="latest prompt",
+    )
+    context = ChatContext(request)
+
+    history = await context._load_chat_history()
+
+    assert history == []

@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from datetime import datetime
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -14,7 +15,9 @@ from app.models.user import User
 from app.services.prompt_draft_service import (
     PromptDraftConversationTooShortError,
     PromptDraftTaskNotFoundError,
+    _stream_prompt_text_generation,
     generate_prompt_draft,
+    generate_prompt_draft_stream,
 )
 
 
@@ -232,7 +235,7 @@ def test_generate_prompt_draft_success_returns_prompt_contract(
     assert "你的工作方式" in result["prompt"]
     assert "处理任务时请遵循以下原则" in result["prompt"]
     assert "输出要求" in result["prompt"]
-    assert result["model"] == "default-model"
+    assert result["model"] == ""
     assert result["version"] == 1
     assert result["created_at"] is not None
 
@@ -519,3 +522,92 @@ def test_generate_prompt_draft_uses_fallback_title_when_title_is_meta(
         )
 
     assert result["title"] == "流程图协作提示词"
+
+
+def test_generate_prompt_draft_logs_do_not_include_model_secrets(
+    test_db: Session, test_user: User
+):
+    task = _create_task(test_db, test_user)
+    _add_user_subtask(test_db, test_user, task, "先总结，再给执行步骤。")
+    _add_assistant_subtask(test_db, test_user, task, "已收到，我会按这个结构回答。")
+
+    generated_prompt = "\n".join(
+        [
+            "你是协作助手，负责将需求转为可执行方案。",
+            "",
+            "你的工作方式：",
+            "- 先结论后步骤。",
+            "",
+            "处理任务时请遵循以下原则：",
+            "- 方案可执行、可复用。",
+            "",
+            "输出要求：",
+            "- 结构清晰。",
+        ]
+    )
+    model_config = {
+        "provider": "openai",
+        "model_id": "gpt-test",
+        "api_key": "sk-secret-value",
+        "default_headers": {"Authorization": "Bearer top-secret-header"},
+    }
+
+    with (
+        patch(
+            "app.services.prompt_draft_service._resolve_model_config",
+            return_value=(model_config, "gpt-test"),
+        ),
+        patch(
+            "app.services.prompt_draft_service.chat_shell_model_service.complete_text",
+            new=AsyncMock(side_effect=[generated_prompt, "协作提示词"]),
+        ),
+        patch("app.services.prompt_draft_service.logger.info") as mock_logger_info,
+    ):
+        generate_prompt_draft(
+            db=test_db,
+            task_id=task.id,
+            current_user=test_user,
+            model="gpt-test",
+            source="pet_panel",
+        )
+
+    logged_text = " ".join(
+        str(arg) for call in mock_logger_info.call_args_list for arg in call.args
+    )
+    assert "sk-secret-value" not in logged_text
+    assert "top-secret-header" not in logged_text
+
+
+@pytest.mark.asyncio
+async def test_stream_prompt_generation_logs_do_not_include_model_secrets():
+    async def _mock_stream():
+        yield SimpleNamespace(type="response.output_text.delta", delta="你是")
+
+    with (
+        patch(
+            "app.services.prompt_draft_service.chat_shell_model_service.create_response",
+            new=AsyncMock(return_value=_mock_stream()),
+        ),
+        patch("app.services.prompt_draft_service.logger.info") as mock_logger_info,
+    ):
+        chunks = [
+            chunk
+            async for chunk in _stream_prompt_text_generation(
+                model_id="gpt-test",
+                input_messages=[{"role": "user", "content": "hello"}],
+                prompt_instructions="system",
+                metadata={"history_limit": 0},
+                model_config={
+                    "model_id": "gpt-test",
+                    "api_key": "sk-stream-secret",
+                    "default_headers": {"Authorization": "Bearer stream-secret"},
+                },
+            )
+        ]
+
+    assert chunks == ["你是"]
+    logged_text = " ".join(
+        str(arg) for call in mock_logger_info.call_args_list for arg in call.args
+    )
+    assert "sk-stream-secret" not in logged_text
+    assert "stream-secret" not in logged_text

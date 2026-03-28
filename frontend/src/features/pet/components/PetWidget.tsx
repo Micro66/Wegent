@@ -22,15 +22,14 @@ import { PetNotificationPanel } from './PetNotificationPanel'
 import { ExpGainAnimation } from './ExpGainAnimation'
 import { EvolutionAnimation } from './EvolutionAnimation'
 import { ThinkingBubble } from './ThinkingBubble'
-import { PromptDraftDialog } from './PromptDraftDialog'
+import { PromptDraftDialog } from '@/features/prompt-draft/components/PromptDraftDialog'
+import { usePromptDraftHint } from '@/features/prompt-draft/hooks/usePromptDraftHint'
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
 import { cn } from '@/lib/utils'
 import { TaskContext } from '@/features/tasks/contexts/taskContext'
 
 const POSITION_STORAGE_KEY = 'pet-widget-position'
 const DEFAULT_POSITION = { x: 16, y: 16 } // from bottom-right
-const PROMPT_HINT_COOLDOWN_KEY = 'pet-prompt-hint-last'
-const PROMPT_HINT_COOLDOWN_MS = 10 * 60 * 1000
 
 interface Position {
   x: number
@@ -52,12 +51,12 @@ export function PetWidget() {
   const [isHovered, setIsHovered] = useState(false)
   const [isDragging, setIsDragging] = useState(false)
   const [position, setPosition] = useState<Position>(DEFAULT_POSITION)
-  const [showPromptHint, setShowPromptHint] = useState(false)
   const [openPromptDraftDialog, setOpenPromptDraftDialog] = useState(false)
   const widgetRef = useRef<HTMLDivElement>(null)
   const hoverCloseTimerRef = useRef<number | null>(null)
   const taskContext = useContext(TaskContext)
   const selectedTaskId = taskContext?.selectedTask?.id ?? null
+  const showPromptHint = usePromptDraftHint(selectedTaskId)
   const dragStartRef = useRef<{
     mouseX: number
     mouseY: number
@@ -184,24 +183,6 @@ export function PetWidget() {
     },
     [updatePet]
   )
-
-  useEffect(() => {
-    if (!selectedTaskId) return
-
-    const lastShownRaw = localStorage.getItem(PROMPT_HINT_COOLDOWN_KEY)
-    const lastShown = lastShownRaw ? Number(lastShownRaw) : 0
-    if (Date.now() - lastShown < PROMPT_HINT_COOLDOWN_MS) return
-
-    const timer = window.setTimeout(() => {
-      if (Math.random() < 0.35) {
-        setShowPromptHint(true)
-        localStorage.setItem(PROMPT_HINT_COOLDOWN_KEY, String(Date.now()))
-        window.setTimeout(() => setShowPromptHint(false), 6000)
-      }
-    }, 2000)
-
-    return () => window.clearTimeout(timer)
-  }, [selectedTaskId])
 
   // Don't render if no pet, not visible, or on mobile
   if (!pet || !pet.is_visible || isMobile) {
