@@ -38,6 +38,29 @@
       "running": "{{count}} task(s) running",
       "unread": "{{count}} unread message(s)"
     },
-    "allClear": "All tasks completed!"
+    "allClear": "All tasks completed!",
+    "promptDraft": {
+      "cta": "Remember this collaboration style",
+      "subtext": "Extract this conversation into a prompt draft"
+    }
+  },
+  "promptDraft": {
+    "hint": "Want me to summarize this for you?",
+    "dialogTitle": "Extract Current Conversation",
+    "dialogDescription": "Extract reusable rules from this conversation and generate a prompt draft you can fine-tune.",
+    "modelLabel": "Model",
+    "modelPlaceholder": "Use default model",
+    "modelSearch": "Search model...",
+    "noModelFound": "No model found",
+    "useDefaultModel": "Use default model",
+    "loading": "Extracting collaboration preferences and methods from this conversation...",
+    "resultTitle": "Title",
+    "resultPrompt": "Prompt",
+    "generate": "Generate",
+    "regenerate": "Regenerate",
+    "fineTune": "Fine-tune",
+    "clear": "Clear draft",
+    "close": "Close",
+    "generateFailed": "Failed to generate prompt draft"
   }
 }

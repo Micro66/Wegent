@@ -38,6 +38,29 @@
       "running": "{{count}} 个任务进行中",
       "unread": "{{count}} 条未读消息"
     },
-    "allClear": "所有任务已完成！"
+    "allClear": "所有任务已完成！",
+    "promptDraft": {
+      "cta": "帮我记住这种协作方式",
+      "subtext": "将当前对话提炼成提示词草案"
+    }
+  },
+  "promptDraft": {
+    "hint": "要帮你总结一下吗？",
+    "dialogTitle": "提炼当前对话为提示词",
+    "dialogDescription": "从当前会话中提炼可复用规则，生成可继续微调的提示词草案。",
+    "modelLabel": "模型",
+    "modelPlaceholder": "使用默认模型",
+    "modelSearch": "搜索模型...",
+    "noModelFound": "未找到模型",
+    "useDefaultModel": "使用默认模型",
+    "loading": "正在整理这段对话里的协作习惯和方法...",
+    "resultTitle": "标题",
+    "resultPrompt": "Prompt",
+    "generate": "开始生成",
+    "regenerate": "重新生成",
+    "fineTune": "进入微调",
+    "clear": "清空草案",
+    "close": "关闭",
+    "generateFailed": "提示词生成失败"
   }
 }
