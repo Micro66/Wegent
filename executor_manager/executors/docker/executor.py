@@ -956,6 +956,12 @@ class DockerExecutor(Executor):
             ]
         )
 
+        skill_identity_token = get_metadata_field(task, "skill_identity_token")
+        if user_name:
+            cmd.extend(["-e", f"WEGENT_SKILL_USER_NAME={user_name}"])
+        if skill_identity_token:
+            cmd.extend(["-e", f"WEGENT_SKILL_IDENTITY_TOKEN={skill_identity_token}"])
+
         # If using custom base_image, mount executor binary from Named Volume
         if base_image:
             cmd.extend(

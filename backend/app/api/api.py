@@ -58,6 +58,7 @@ from app.api.endpoints.internal import (
     callback_router,
     chat_storage_router,
     services_router,
+    skill_identity_router,
     skills_router,
     subscriptions_router,
     tables_router,
@@ -189,6 +190,9 @@ if not settings.STANDALONE_MODE:
     api_router.include_router(rag_router, prefix="/internal", tags=["internal-rag"])
 
 api_router.include_router(skills_router, prefix="/internal", tags=["internal-skills"])
+api_router.include_router(
+    skill_identity_router, prefix="/internal", tags=["internal-skill-identity"]
+)
 api_router.include_router(tables_router, prefix="/internal", tags=["internal-tables"])
 api_router.include_router(
     internal_bots_router, prefix="/internal", tags=["internal-bots"]
