@@ -5,6 +5,7 @@
 'use client'
 
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { Check, Copy } from 'lucide-react'
 import { modelApis, type UnifiedModel } from '@/apis/models'
 import { taskApis } from '@/apis/tasks'
 import {
@@ -16,6 +17,7 @@ import {
   type PromptDraftVersionsState,
 } from '@/features/prompt-draft/utils/promptDraftStorage'
 import { useTranslation } from '@/hooks/useTranslation'
+import { useToast } from '@/hooks/use-toast'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import {
@@ -92,14 +94,17 @@ function buildRollbackDraftFromVersion(version: PromptDraftVersion): PromptDraft
 
 export function PromptDraftDialog({ open, onOpenChange, taskId }: PromptDraftDialogProps) {
   const { t } = useTranslation('pet')
+  const { toast } = useToast()
   const [models, setModels] = useState<UnifiedModel[]>([])
   const [modelsLoading, setModelsLoading] = useState(false)
   const [model, setModel] = useState('')
   const [versionsState, setVersionsState] = useState<PromptDraftVersionsState | null>(null)
   const [comparisonState, setComparisonState] = useState<PromptDraftComparisonState | null>(null)
   const [isLoading, setIsLoading] = useState(false)
+  const [isCopied, setIsCopied] = useState(false)
   const [error, setError] = useState('')
   const abortControllerRef = useRef<AbortController | null>(null)
+  const copyResetTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const requestVersionRef = useRef(0)
   const openRef = useRef(open)
   const conversationStorageKey = taskId ? `task-${taskId}` : null
@@ -136,6 +141,7 @@ export function PromptDraftDialog({ open, onOpenChange, taskId }: PromptDraftDia
       requestVersionRef.current += 1
       setModel('')
       setError('')
+      setIsCopied(false)
       setIsLoading(false)
       setVersionsState(null)
       setComparisonState(null)
@@ -197,6 +203,7 @@ export function PromptDraftDialog({ open, onOpenChange, taskId }: PromptDraftDia
     abortControllerRef.current = null
     setVersionsState(null)
     setComparisonState(null)
+    setIsCopied(false)
     setIsLoading(false)
     setModel('')
     setError('')
@@ -361,10 +368,25 @@ export function PromptDraftDialog({ open, onOpenChange, taskId }: PromptDraftDia
       }
 
       await navigator.clipboard.writeText(currentVersion.prompt)
+      if (copyResetTimeoutRef.current) {
+        clearTimeout(copyResetTimeoutRef.current)
+      }
+      setIsCopied(true)
       setError('')
+      toast({
+        title: t('promptDraft.copySuccess'),
+      })
+      copyResetTimeoutRef.current = setTimeout(() => {
+        setIsCopied(false)
+        copyResetTimeoutRef.current = null
+      }, 2000)
     } catch (err) {
       const message = err instanceof Error ? err.message : t('promptDraft.copyFailed')
       setError(message)
+      toast({
+        variant: 'destructive',
+        title: message,
+      })
     }
   }
 
@@ -385,6 +407,10 @@ export function PromptDraftDialog({ open, onOpenChange, taskId }: PromptDraftDia
     return () => {
       abortControllerRef.current?.abort()
       abortControllerRef.current = null
+      if (copyResetTimeoutRef.current) {
+        clearTimeout(copyResetTimeoutRef.current)
+        copyResetTimeoutRef.current = null
+      }
     }
   }, [])
 
@@ -543,7 +569,17 @@ export function PromptDraftDialog({ open, onOpenChange, taskId }: PromptDraftDia
                   onClick={() => void copyPrompt()}
                   disabled={!hasResult || isComparing}
                 >
-                  {t('promptDraft.copyPrompt')}
+                  {isCopied ? (
+                    <>
+                      <Check className="mr-2 h-4 w-4 text-green-500" />
+                      {t('promptDraft.copied')}
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="mr-2 h-4 w-4" />
+                      {t('promptDraft.copyPrompt')}
+                    </>
+                  )}
                 </Button>
               </>
             ) : (

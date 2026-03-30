@@ -66,9 +66,11 @@
     "generate": "开始生成",
     "regenerate": "重新生成",
     "copyPrompt": "复制提示词",
+    "copied": "已复制",
     "clear": "清空草案",
     "close": "关闭",
     "generateFailed": "提示词生成失败",
+    "copySuccess": "提示词已复制",
     "copyFailed": "复制提示词失败",
     "source": {
       "initial": "首次生成",

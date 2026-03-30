@@ -66,9 +66,11 @@
     "generate": "Generate",
     "regenerate": "Regenerate",
     "copyPrompt": "Copy prompt",
+    "copied": "Copied",
     "clear": "Clear draft",
     "close": "Close",
     "generateFailed": "Failed to generate prompt draft",
+    "copySuccess": "Prompt copied",
     "copyFailed": "Failed to copy prompt",
     "source": {
       "initial": "Initial",

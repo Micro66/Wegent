@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 
 import { modelApis } from '@/apis/models'
 import { taskApis } from '@/apis/tasks'
@@ -15,9 +15,12 @@ jest.mock('@/hooks/useTranslation', () => ({
   }),
 }))
 
-jest.mock('@/features/prompt-tune/components/PromptFineTuneDialog', () => ({
-  __esModule: true,
-  default: () => null,
+const mockToast = jest.fn()
+
+jest.mock('@/hooks/use-toast', () => ({
+  useToast: () => ({
+    toast: mockToast,
+  }),
 }))
 
 jest.mock('@/apis/tasks', () => ({
@@ -270,6 +273,7 @@ describe('PromptDraftDialog', () => {
   })
 
   test('replaces fine-tune with copy prompt and writes the current prompt to clipboard', async () => {
+    jest.useFakeTimers()
     ;(modelApis.getUnifiedModels as jest.Mock).mockResolvedValue({ data: [] })
     ;(taskApis.generatePromptDraftStream as jest.Mock).mockResolvedValue({
       title: '版本一',
@@ -294,6 +298,22 @@ describe('PromptDraftDialog', () => {
         '你是产品协作助手，负责帮助我沉淀协作方式。'
       )
     })
+
+    expect(mockToast).toHaveBeenCalledWith({
+      title: 'promptDraft.copySuccess',
+    })
+    await waitFor(() => {
+      expect(screen.getByTestId('prompt-draft-copy-button')).toHaveTextContent('promptDraft.copied')
+    })
+
+    act(() => {
+      jest.advanceTimersByTime(2000)
+    })
+
+    expect(screen.getByTestId('prompt-draft-copy-button')).toHaveTextContent(
+      'promptDraft.copyPrompt'
+    )
+    jest.useRealTimers()
   })
 
   test('rollback clones a historical version into a new current version', async () => {
@@ -461,7 +481,6 @@ describe('PromptDraftDialog', () => {
 
     rerender(<PromptDraftDialog open={false} onOpenChange={onOpenChange} taskId={1} />)
 
-     
     resolveGenerate!({
       title: '隐藏版本',
       prompt: '这份结果不该在关闭后写入本地存储。',
