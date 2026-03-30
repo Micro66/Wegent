@@ -6,7 +6,7 @@
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import jwt
@@ -34,13 +34,18 @@ def create_skill_identity_token(
     runtime_name: str,
 ) -> str:
     """Create a skill identity token for skill HTTP requests."""
+    issued_at = datetime.now(timezone.utc)
+    expires_at = issued_at + timedelta(
+        minutes=settings.SKILL_IDENTITY_TOKEN_EXPIRE_MINUTES
+    )
     payload = {
         "type": "skill_identity",
         "user_id": user_id,
         "user_name": user_name,
         "runtime_type": runtime_type,
         "runtime_name": runtime_name,
-        "iat": int(datetime.now(timezone.utc).timestamp()),
+        "iat": int(issued_at.timestamp()),
+        "exp": int(expires_at.timestamp()),
     }
     return jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
 
@@ -60,6 +65,9 @@ def verify_skill_identity_token(token: str) -> Optional[SkillIdentityTokenInfo]:
             runtime_type=payload["runtime_type"],
             runtime_name=payload["runtime_name"],
         )
+    except jwt.ExpiredSignatureError:
+        logger.warning("Skill identity token has expired")
+        return None
     except jwt.InvalidTokenError as exc:
         logger.warning(f"Invalid skill identity token: {exc}")
         return None

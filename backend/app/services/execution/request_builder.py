@@ -2004,9 +2004,9 @@ class TaskRequestBuilder:
         self, task: TaskResource, subtask: Subtask, user: User
     ) -> str:
         """Generate a dedicated skill identity token for business HTTP calls."""
-        runtime_type = (
-            "sandbox" if getattr(task, "type", None) == "sandbox" else "executor"
-        )
+        task_json = task.json if isinstance(task.json, dict) else {}
+        task_labels = (task_json.get("metadata", {}) or {}).get("labels", {}) or {}
+        runtime_type = "sandbox" if task_labels.get("type") == "sandbox" else "executor"
         runtime_name = subtask.executor_name or f"task-{task.id}-subtask-{subtask.id}"
         return create_skill_identity_token(
             user_id=user.id,

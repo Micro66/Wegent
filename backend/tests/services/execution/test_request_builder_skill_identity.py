@@ -6,6 +6,7 @@
 
 from types import SimpleNamespace
 
+from app.services.auth import verify_skill_identity_token
 from app.services.execution.request_builder import TaskRequestBuilder
 
 
@@ -51,3 +52,20 @@ def test_build_generates_skill_identity_token(test_db, mocker):
     )
 
     assert result.skill_identity_token == "skill-jwt"
+
+
+def test_generate_skill_identity_token_uses_sandbox_task_type(test_db):
+    """Sandbox tasks should emit sandbox runtime_type in skill identity token."""
+    builder = TaskRequestBuilder(test_db)
+    subtask = SimpleNamespace(id=2, executor_name="sandbox-executor")
+    task = SimpleNamespace(
+        id=1,
+        json={"metadata": {"labels": {"type": "sandbox"}}, "spec": {}},
+    )
+    user = SimpleNamespace(id=7, user_name="alice")
+
+    token = builder._generate_skill_identity_token(task, subtask, user)
+    info = verify_skill_identity_token(token)
+
+    assert info is not None
+    assert info.runtime_type == "sandbox"
