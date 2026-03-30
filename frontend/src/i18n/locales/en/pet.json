@@ -56,11 +56,36 @@
     "loading": "Extracting collaboration preferences and methods from this conversation...",
     "resultTitle": "Title",
     "resultPrompt": "Prompt",
+    "versions": "Versions",
+    "currentVersion": "Current",
+    "currentVersionLabel": "The current version is used as the baseline for regenerate and fine-tune actions.",
+    "keepOld": "Keep old",
+    "useNew": "Use new",
+    "rollback": "Rollback to this version",
+    "compareToCurrent": "Compare to current",
     "generate": "Generate",
     "regenerate": "Regenerate",
     "fineTune": "Fine-tune",
     "clear": "Clear draft",
     "close": "Close",
-    "generateFailed": "Failed to generate prompt draft"
+    "generateFailed": "Failed to generate prompt draft",
+    "source": {
+      "initial": "Initial",
+      "regenerate": "Regenerated",
+      "rollback": "Rollback"
+    },
+    "compare": {
+      "title": "Regeneration Comparison",
+      "historyTitle": "Version Comparison",
+      "summary": "Change summary",
+      "previous": "Previous version",
+      "next": "New version",
+      "current": "Current version",
+      "selected": "Selected historical version",
+      "diff": "Diff view",
+      "empty": "Nothing to compare yet",
+      "cancel": "Cancel comparison",
+      "rollbackToSelected": "Rollback to selected"
+    }
   }
 }

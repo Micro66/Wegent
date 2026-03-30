@@ -226,6 +226,8 @@ export interface TaskSkillsResponse {
 export interface GeneratePromptDraftRequest {
   model?: string
   source?: string
+  current_prompt?: string
+  regenerate?: boolean
 }
 
 export interface GeneratePromptDraftResponse {

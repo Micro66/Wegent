@@ -6,6 +6,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.services.prompt_draft.prompt_contract import build_markdown_prompt
+
 TITLE_MAX_LENGTH = 18
 PROMPT_META_PHRASES = (
     "会话提炼助手",
@@ -180,29 +182,13 @@ def build_dynamic_fallback(
         if "prompt draft" not in lowered and "task" not in lowered:
             title = normalized_task_title[:TITLE_MAX_LENGTH]
 
-    prompt_lines = [
-        f"你是{assistant_identity}，负责{responsibility}。",
-        "",
-        "你的工作方式：",
-    ]
-    prompt_lines.extend(f"- {item}" for item in work_modes)
-    prompt_lines.extend(f"- {item}" for item in stable_preferences)
-    prompt_lines.extend(
-        [
-            "",
-            "处理任务时请遵循以下原则：",
-        ]
+    prompt = build_markdown_prompt(
+        intro=f"你是{assistant_identity}，负责{responsibility}。",
+        work_modes=[*work_modes, *stable_preferences],
+        principles=principles,
+        output_requirements=output_requirements,
     )
-    prompt_lines.extend(f"- {item}" for item in principles)
-
-    prompt_lines.extend(
-        [
-            "",
-            "输出要求：",
-        ]
-    )
-    prompt_lines.extend(f"- {item}" for item in output_requirements)
-    return title, "\n".join(prompt_lines)
+    return title, prompt
 
 
 __all__ = [

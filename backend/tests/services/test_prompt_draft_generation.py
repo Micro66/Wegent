@@ -31,4 +31,4 @@ def test_build_dynamic_fallback_uses_flowchart_identity_for_mermaid_requests():
 
     assert title == "流程图协作提示词"
     assert "你是流程图协作助手" in prompt
-    assert "输出要求：" in prompt
+    assert "\n\n## 输出要求\n" in prompt

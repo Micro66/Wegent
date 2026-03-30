@@ -12,6 +12,10 @@ from typing import Any, AsyncIterator
 from app.services import chat_shell_model_service
 from app.services.prompt_draft.fallback import _looks_like_meta_prompt
 from app.services.prompt_draft.generation import safe_model_config_for_logging
+from app.services.prompt_draft.prompt_contract import (
+    PROMPT_SECTION_TITLES,
+    normalize_prompt_markdown,
+)
 
 logger = logging.getLogger(__name__)
 TITLE_MAX_LENGTH = 18
@@ -28,12 +32,9 @@ TITLE_METADATA = {"history_limit": 0}
 def validate_prompt_contract(prompt: str) -> None:
     if not prompt.startswith("你是"):
         raise ValueError("invalid_prompt_contract")
-    if "你的工作方式" not in prompt:
-        raise ValueError("invalid_prompt_contract")
-    if "处理任务时请遵循以下原则" not in prompt:
-        raise ValueError("invalid_prompt_contract")
-    if "输出要求" not in prompt:
-        raise ValueError("invalid_prompt_contract")
+    for section_title in PROMPT_SECTION_TITLES:
+        if f"## {section_title}" not in prompt:
+            raise ValueError("invalid_prompt_contract")
     if _looks_like_meta_prompt(prompt):
         raise ValueError("prompt_echoed_generation_instructions")
 
@@ -63,8 +64,10 @@ def format_conversation_material(conversation_blocks: list[tuple[str, str]]) -> 
 
 def build_generation_messages(
     conversation_blocks: list[tuple[str, str]],
+    current_prompt: str | None = None,
+    regenerate: bool = False,
 ) -> list[dict[str, str]]:
-    return [
+    messages = [
         {
             "role": "user",
             "content": format_conversation_material(conversation_blocks),
@@ -76,14 +79,30 @@ def build_generation_messages(
                 "输出必须围绕会话本身的任务领域与协作方式，"
                 "而不是围绕“会话提炼”这个任务。"
                 "禁止出现“会话提炼助手”“用户会话记录”“上述会话”“prompt草案”等字样。"
-                "只输出最终 prompt 正文，不要解释、不要 markdown、不要 JSON。"
-                "必须使用固定结构：你是xxxx助手，负责xxxx。"
-                "你的工作方式："
-                "处理任务时请遵循以下原则："
-                "输出要求："
+                "只输出最终 prompt 正文，不要解释、不要 JSON、不要代码块。"
+                "输出必须是 Markdown 正文，且严格使用以下结构："
+                "第一行必须是“你是xxxx助手，负责xxxx。”；"
+                "然后空一行，再输出“## 你的工作方式”；"
+                "然后空一行，再输出“## 处理任务时请遵循以下原则”；"
+                "然后空一行，再输出“## 输出要求”。"
+                "每个小节下都必须使用 `- ` 开头的项目符号列表。"
             ),
         },
     ]
+    if regenerate and current_prompt and current_prompt.strip():
+        messages.append({"role": "assistant", "content": current_prompt.strip()})
+        messages.append(
+            {
+                "role": "user",
+                "content": (
+                    "我对当前方案不满意。"
+                    "请基于同一份会话材料重新编写一个更好的 prompt。"
+                    "保留任务领域与协作方式，但不要沿用当前版本里不够好的表达。"
+                    "只输出新的最终 prompt 正文，不要解释、不要 JSON、不要代码块。"
+                ),
+            }
+        )
+    return messages
 
 
 def build_prompt_generation_system_prompt() -> str:
@@ -91,6 +110,7 @@ def build_prompt_generation_system_prompt() -> str:
         "你负责把会话材料改写成未来可复用的系统提示词。"
         "不要复述本说明，不要输出关于会话提炼或提示词生成的元说明。"
         "输出必须贴合会话中的真实任务领域与协作方式。"
+        "最终输出必须是 Markdown 正文，包含“## 你的工作方式”“## 处理任务时请遵循以下原则”“## 输出要求”三个二级标题。"
     )
 
 
@@ -140,7 +160,7 @@ def build_prompt_retry_message(invalid_prompt: str) -> dict[str, str]:
             "问题在于你描述了“会话提炼/会话记录/prompt草案”这个提炼任务本身，"
             "而不是从材料里提炼未来助手应承担的真实任务领域与协作规则。"
             "禁止出现“会话提炼助手”“用户会话记录”“上述会话”“prompt草案”等字样。"
-            "请重新输出最终 prompt 正文。\n\n"
+            "请重新输出符合 Markdown 结构要求的最终 prompt 正文。\n\n"
             f"无效输出如下：\n{invalid_prompt}"
         ),
     }
@@ -163,6 +183,7 @@ async def generate_prompt_text(
     )
     if not prompt:
         raise ValueError("invalid_model_output")
+    prompt = normalize_prompt_markdown(prompt)
 
     try:
         validate_prompt_contract(prompt)
@@ -189,6 +210,7 @@ async def generate_prompt_text(
     )
     if not retry_prompt:
         raise ValueError("invalid_model_output")
+    retry_prompt = normalize_prompt_markdown(retry_prompt)
     validate_prompt_contract(retry_prompt)
     return retry_prompt
 
@@ -200,9 +222,15 @@ async def run_skill_generation(
     task_id: int,
     user_id: int,
     fallback_title: str,
+    current_prompt: str | None = None,
+    regenerate: bool = False,
 ) -> dict[str, Any]:
     model_id = str(model_config.get("model_id") or "").strip() or selected_model_name
-    input_messages = build_generation_messages(conversation_blocks)
+    input_messages = build_generation_messages(
+        conversation_blocks,
+        current_prompt=current_prompt,
+        regenerate=regenerate,
+    )
     prompt_instructions = build_prompt_generation_system_prompt()
 
     logger.info(
@@ -292,9 +320,15 @@ async def generate_prompt_draft_stream_result(
     fallback_title: str,
     fallback_prompt: str,
     conversation_blocks: list[tuple[str, str]],
+    current_prompt: str | None = None,
+    regenerate: bool = False,
 ) -> AsyncIterator[dict[str, Any]]:
     model_id = str(model_config.get("model_id") or "").strip() or selected_model
-    input_messages = build_generation_messages(conversation_blocks)
+    input_messages = build_generation_messages(
+        conversation_blocks,
+        current_prompt=current_prompt,
+        regenerate=regenerate,
+    )
     prompt_instructions = build_prompt_generation_system_prompt()
 
     try:
@@ -309,7 +343,7 @@ async def generate_prompt_draft_stream_result(
             chunks.append(delta)
             yield {"type": "prompt_delta", "delta": delta}
 
-        prompt_text = "".join(chunks).strip()
+        prompt_text = normalize_prompt_markdown("".join(chunks).strip())
         if not prompt_text:
             prompt_text = await generate_prompt_text(
                 model_id=model_id,

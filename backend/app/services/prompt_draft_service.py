@@ -451,6 +451,8 @@ async def generate_prompt_draft_stream(
     current_user: User,
     model: str | None = None,
     source: str | None = None,
+    current_prompt: str | None = None,
+    regenerate: bool = False,
 ) -> AsyncIterator[dict[str, Any]]:
     """Generate prompt draft as stream events without DB persistence."""
 
@@ -489,6 +491,8 @@ async def generate_prompt_draft_stream(
         fallback_title=fallback_title,
         fallback_prompt=fallback_prompt,
         conversation_blocks=blocks,
+        current_prompt=current_prompt,
+        regenerate=regenerate,
     ):
         yield event
 
@@ -499,6 +503,8 @@ def generate_prompt_draft(
     current_user: User,
     model: str | None = None,
     source: str | None = None,
+    current_prompt: str | None = None,
+    regenerate: bool = False,
 ) -> dict[str, Any]:
     """Generate a prompt draft from task conversation."""
 
@@ -525,6 +531,8 @@ def generate_prompt_draft(
                     task_id=task.id,
                     user_id=current_user.id,
                     fallback_title=fallback_title,
+                    current_prompt=current_prompt,
+                    regenerate=regenerate,
                 )
             )
         except Exception:

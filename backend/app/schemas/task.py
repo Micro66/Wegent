@@ -261,6 +261,8 @@ class PromptDraftGenerateRequest(BaseModel):
 
     model: Optional[str] = None
     source: Optional[str] = None
+    current_prompt: Optional[str] = None
+    regenerate: bool = False
 
 
 class PromptDraftGenerateResponse(BaseModel):

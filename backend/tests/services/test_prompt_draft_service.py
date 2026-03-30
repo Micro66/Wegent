@@ -232,9 +232,9 @@ def test_generate_prompt_draft_success_returns_prompt_contract(
 
     assert result["title"] == "协作提示词"
     assert result["prompt"].startswith("你是")
-    assert "你的工作方式" in result["prompt"]
-    assert "处理任务时请遵循以下原则" in result["prompt"]
-    assert "输出要求" in result["prompt"]
+    assert "\n\n## 你的工作方式\n" in result["prompt"]
+    assert "\n\n## 处理任务时请遵循以下原则\n" in result["prompt"]
+    assert "\n\n## 输出要求\n" in result["prompt"]
     assert result["model"] == ""
     assert result["version"] == 1
     assert result["created_at"] is not None
@@ -271,13 +271,13 @@ def test_generate_prompt_draft_uses_chat_shell_skill_pipeline(
         [
             "你是协作助手，负责将需求转为可执行方案。",
             "",
-            "你的工作方式：",
+            "## 你的工作方式",
             "- 先结论后步骤。",
             "",
-            "处理任务时请遵循以下原则：",
+            "## 处理任务时请遵循以下原则",
             "- 方案可执行、可复用。",
             "",
-            "输出要求：",
+            "## 输出要求",
             "- 结构清晰。",
         ]
     )
@@ -336,13 +336,13 @@ def test_generate_prompt_draft_uses_three_message_transcript_prompt(
         [
             "你是流程图协作助手，负责根据对话沉淀可复用协作提示词。",
             "",
-            "你的工作方式：",
+            "## 你的工作方式",
             "- 优先提炼稳定协作方式。",
             "",
-            "处理任务时请遵循以下原则：",
+            "## 处理任务时请遵循以下原则",
             "- 不把一次性任务细节固化为长期规则。",
             "",
-            "输出要求：",
+            "## 输出要求",
             "- 结果可直接作为系统提示词使用。",
         ]
     )
@@ -401,13 +401,13 @@ def test_generate_prompt_draft_retries_when_first_prompt_echoes_extraction_task(
         [
             "你是会话提炼助手，负责根据给定的用户会话记录提炼可复用的prompt草案。",
             "",
-            "你的工作方式：",
+            "## 你的工作方式",
             "- 基于用户提供的会话记录进行提炼。",
             "",
-            "处理任务时请遵循以下原则：",
+            "## 处理任务时请遵循以下原则",
             "- 提炼稳定的协作方式。",
             "",
-            "输出要求：",
+            "## 输出要求",
             "- 仅输出最终prompt正文。",
         ]
     )
@@ -415,15 +415,15 @@ def test_generate_prompt_draft_retries_when_first_prompt_echoes_extraction_task(
         [
             "你是流程图协作助手，负责帮助用户梳理流程、补齐关键信息，并输出可执行的流程图方案。",
             "",
-            "你的工作方式：",
+            "## 你的工作方式",
             "- 先识别流程目标、参与对象和关键步骤。",
             "- 信息不足时先询问缺失的节点、分支和判断条件。",
             "",
-            "处理任务时请遵循以下原则：",
+            "## 处理任务时请遵循以下原则",
             "- 优先沉淀可复用的流程图协作方式，而不是复述一次性任务背景。",
             "- 输出应围绕流程图任务本身，不得转而描述会话提炼过程。",
             "",
-            "输出要求：",
+            "## 输出要求",
             "- 结构清晰，便于后续直接复用或继续微调。",
         ]
     )
@@ -480,13 +480,13 @@ def test_generate_prompt_draft_uses_fallback_title_when_title_is_meta(
         [
             "你是流程图协作助手，负责帮助用户梳理流程、补齐关键信息，并输出可执行的流程图方案。",
             "",
-            "你的工作方式：",
+            "## 你的工作方式",
             "- 先识别流程目标、参与对象和关键步骤。",
             "",
-            "处理任务时请遵循以下原则：",
+            "## 处理任务时请遵循以下原则",
             "- 信息不足时优先追问缺失环节。",
             "",
-            "输出要求：",
+            "## 输出要求",
             "- 结果可直接作为系统提示词使用。",
         ]
     )
@@ -535,13 +535,13 @@ def test_generate_prompt_draft_logs_do_not_include_model_secrets(
         [
             "你是协作助手，负责将需求转为可执行方案。",
             "",
-            "你的工作方式：",
+            "## 你的工作方式",
             "- 先结论后步骤。",
             "",
-            "处理任务时请遵循以下原则：",
+            "## 处理任务时请遵循以下原则",
             "- 方案可执行、可复用。",
             "",
-            "输出要求：",
+            "## 输出要求",
             "- 结构清晰。",
         ]
     )
@@ -576,6 +576,54 @@ def test_generate_prompt_draft_logs_do_not_include_model_secrets(
     )
     assert "sk-secret-value" not in logged_text
     assert "top-secret-header" not in logged_text
+
+
+def test_generate_prompt_draft_normalizes_single_line_prompt_to_markdown(
+    test_db: Session, test_user: User
+):
+    task = _create_task(test_db, test_user)
+    _add_user_subtask(test_db, test_user, task, "帮我创建一个流程图")
+    _add_assistant_subtask(test_db, test_user, task, "先告诉我主题和主要步骤。")
+
+    single_line_prompt = (
+        "你是流程图协作助手，负责帮助用户梳理流程、补齐关键信息，并输出可执行的流程图方案。"
+        "你的工作方式：先识别流程目标、参与对象和关键步骤。"
+        "处理任务时请遵循以下原则：信息不足时优先追问缺失环节。"
+        "输出要求：结果可直接作为系统提示词使用。"
+    )
+
+    with (
+        patch(
+            "app.services.prompt_draft_service._resolve_model_config",
+            return_value=(
+                {
+                    "provider": "openai",
+                    "model_id": "gpt-test",
+                    "modelType": "llm",
+                },
+                "gpt-test",
+            ),
+        ),
+        patch(
+            "app.services.prompt_draft_service.chat_shell_model_service.complete_text",
+            new=AsyncMock(side_effect=[single_line_prompt, "流程图协作提示词"]),
+        ),
+    ):
+        result = generate_prompt_draft(
+            db=test_db,
+            task_id=task.id,
+            current_user=test_user,
+            model="gpt-test",
+            source="pet_panel",
+        )
+
+    assert result["prompt"].startswith("你是流程图协作助手")
+    assert "\n\n## 你的工作方式\n" in result["prompt"]
+    assert "\n\n## 处理任务时请遵循以下原则\n" in result["prompt"]
+    assert "\n\n## 输出要求\n" in result["prompt"]
+    assert "- 先识别流程目标、参与对象和关键步骤。" in result["prompt"]
+    assert "- 信息不足时优先追问缺失环节。" in result["prompt"]
+    assert "- 结果可直接作为系统提示词使用。" in result["prompt"]
 
 
 @pytest.mark.asyncio

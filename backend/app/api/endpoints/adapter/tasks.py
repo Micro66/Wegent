@@ -301,6 +301,8 @@ def generate_task_prompt_draft(
             current_user=current_user,
             model=request.model,
             source=request.source,
+            current_prompt=request.current_prompt,
+            regenerate=request.regenerate,
         )
     except prompt_draft_service.PromptDraftTaskNotFoundError:
         raise HTTPException(status_code=404, detail="Task not found")
@@ -356,6 +358,8 @@ async def generate_task_prompt_draft_stream(
             current_user=current_user,
             model=request.model,
             source=request.source,
+            current_prompt=request.current_prompt,
+            regenerate=request.regenerate,
         ):
             yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
 
