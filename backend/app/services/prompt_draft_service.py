@@ -364,6 +364,8 @@ async def _run_skill_generation(
     task_id: int,
     user_id: int,
     fallback_title: str,
+    current_prompt: str | None = None,
+    regenerate: bool = False,
 ) -> dict[str, Any]:
     return await _run_prompt_draft_skill_generation(
         model_config=model_config,
@@ -372,6 +374,8 @@ async def _run_skill_generation(
         task_id=task_id,
         user_id=user_id,
         fallback_title=fallback_title,
+        current_prompt=current_prompt,
+        regenerate=regenerate,
     )
 
 

@@ -65,10 +65,11 @@
     "compareToCurrent": "与当前版本对比",
     "generate": "开始生成",
     "regenerate": "重新生成",
-    "fineTune": "进入微调",
+    "copyPrompt": "复制提示词",
     "clear": "清空草案",
     "close": "关闭",
     "generateFailed": "提示词生成失败",
+    "copyFailed": "复制提示词失败",
     "source": {
       "initial": "首次生成",
       "regenerate": "重新生成",

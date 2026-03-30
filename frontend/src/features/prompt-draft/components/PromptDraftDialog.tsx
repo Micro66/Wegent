@@ -29,7 +29,6 @@ import {
 import { SearchableSelect } from '@/components/ui/searchable-select'
 import { PromptDraftComparisonPanel } from '@/features/prompt-draft/components/PromptDraftComparisonPanel'
 import { PromptDraftVersionList } from '@/features/prompt-draft/components/PromptDraftVersionList'
-import PromptFineTuneDialog from '@/features/prompt-tune/components/PromptFineTuneDialog'
 
 interface PromptDraftDialogProps {
   open: boolean
@@ -100,7 +99,6 @@ export function PromptDraftDialog({ open, onOpenChange, taskId }: PromptDraftDia
   const [comparisonState, setComparisonState] = useState<PromptDraftComparisonState | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState('')
-  const [openFineTune, setOpenFineTune] = useState(false)
   const abortControllerRef = useRef<AbortController | null>(null)
   const requestVersionRef = useRef(0)
   const openRef = useRef(open)
@@ -141,7 +139,6 @@ export function PromptDraftDialog({ open, onOpenChange, taskId }: PromptDraftDia
       setIsLoading(false)
       setVersionsState(null)
       setComparisonState(null)
-      setOpenFineTune(false)
       return
     }
     const versions = getPromptDraftVersions(conversationStorageKey)
@@ -203,7 +200,6 @@ export function PromptDraftDialog({ open, onOpenChange, taskId }: PromptDraftDia
     setIsLoading(false)
     setModel('')
     setError('')
-    setOpenFineTune(false)
   }
 
   const persistVersion = (
@@ -348,6 +344,26 @@ export function PromptDraftDialog({ open, onOpenChange, taskId }: PromptDraftDia
       if (requestVersionRef.current === requestVersion && openRef.current) {
         setIsLoading(false)
       }
+    }
+  }
+
+  const copyPrompt = async () => {
+    if (!currentVersion?.prompt) return
+
+    try {
+      if (
+        typeof navigator === 'undefined' ||
+        !navigator.clipboard ||
+        typeof navigator.clipboard.writeText !== 'function'
+      ) {
+        throw new Error(t('promptDraft.copyFailed'))
+      }
+
+      await navigator.clipboard.writeText(currentVersion.prompt)
+      setError('')
+    } catch (err) {
+      const message = err instanceof Error ? err.message : t('promptDraft.copyFailed')
+      setError(message)
     }
   }
 
@@ -521,12 +537,12 @@ export function PromptDraftDialog({ open, onOpenChange, taskId }: PromptDraftDia
                   {t('promptDraft.regenerate')}
                 </Button>
                 <Button
-                  data-testid="prompt-draft-fine-tune-button"
+                  data-testid="prompt-draft-copy-button"
                   variant="outline"
-                  onClick={() => setOpenFineTune(true)}
+                  onClick={() => void copyPrompt()}
                   disabled={!hasResult || isComparing}
                 >
-                  {t('promptDraft.fineTune')}
+                  {t('promptDraft.copyPrompt')}
                 </Button>
               </>
             ) : (
@@ -545,29 +561,6 @@ export function PromptDraftDialog({ open, onOpenChange, taskId }: PromptDraftDia
           </DialogFooter>
         </DialogContent>
       </Dialog>
-
-      <PromptFineTuneDialog
-        open={openFineTune}
-        onOpenChange={setOpenFineTune}
-        initialPrompt={currentVersion?.prompt ?? ''}
-        modelName={model}
-        onSave={updatedPrompt => {
-          if (!taskId || !currentVersion) return
-          const nextState = persistVersion(
-            {
-              title: currentVersion.title,
-              prompt: updatedPrompt,
-              model: model || currentVersion.model || 'default-model',
-              version: currentVersion.version,
-              createdAt: new Date().toISOString(),
-              sourceConversationId: String(taskId),
-            },
-            'regenerate'
-          )
-          const nextCurrent = nextState?.versions[0]
-          setModel(nextCurrent?.model ?? (model || currentVersion.model))
-        }}
-      />
     </>
   )
 }

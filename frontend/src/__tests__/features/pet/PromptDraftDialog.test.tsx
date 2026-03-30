@@ -34,9 +34,14 @@ jest.mock('@/apis/models', () => ({
 }))
 
 describe('PromptDraftDialog', () => {
+  const mockClipboard = {
+    writeText: jest.fn(),
+  }
+
   beforeEach(() => {
     localStorage.clear()
     jest.clearAllMocks()
+    Object.assign(navigator, { clipboard: mockClipboard })
   })
 
   test('generates prompt draft and renders returned title and prompt', async () => {
@@ -262,6 +267,33 @@ describe('PromptDraftDialog', () => {
     expect(versions?.versions).toHaveLength(2)
     expect(versions?.versions[0].title).toBe('版本二')
     expect(versions?.currentVersionId).toBe(versions?.versions[0].id)
+  })
+
+  test('replaces fine-tune with copy prompt and writes the current prompt to clipboard', async () => {
+    ;(modelApis.getUnifiedModels as jest.Mock).mockResolvedValue({ data: [] })
+    ;(taskApis.generatePromptDraftStream as jest.Mock).mockResolvedValue({
+      title: '版本一',
+      prompt: '你是产品协作助手，负责帮助我沉淀协作方式。',
+      model: 'gpt-5.4',
+      version: 1,
+      created_at: '2026-03-28T00:00:00Z',
+    })
+
+    render(<PromptDraftDialog open={true} onOpenChange={() => {}} taskId={1} />)
+
+    fireEvent.click(screen.getByTestId('prompt-draft-generate-button'))
+    expect((await screen.findAllByText('版本一')).length).toBeGreaterThan(0)
+
+    expect(screen.getByTestId('prompt-draft-copy-button')).toBeInTheDocument()
+    expect(screen.queryByTestId('prompt-draft-fine-tune-button')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('prompt-draft-copy-button'))
+
+    await waitFor(() => {
+      expect(mockClipboard.writeText).toHaveBeenCalledWith(
+        '你是产品协作助手，负责帮助我沉淀协作方式。'
+      )
+    })
   })
 
   test('rollback clones a historical version into a new current version', async () => {

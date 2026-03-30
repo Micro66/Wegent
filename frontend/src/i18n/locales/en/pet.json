@@ -65,10 +65,11 @@
     "compareToCurrent": "Compare to current",
     "generate": "Generate",
     "regenerate": "Regenerate",
-    "fineTune": "Fine-tune",
+    "copyPrompt": "Copy prompt",
     "clear": "Clear draft",
     "close": "Close",
     "generateFailed": "Failed to generate prompt draft",
+    "copyFailed": "Failed to copy prompt",
     "source": {
       "initial": "Initial",
       "regenerate": "Regenerated",
