@@ -442,21 +442,13 @@ describe('PromptDraftDialog', () => {
   })
 
   test('closing the dialog while generation is in flight does not persist the hidden result', async () => {
-    let resolveGenerate:
-      | ((value: {
-          title: string
-          prompt: string
-          model: string
-          version: number
-          created_at: string
-        }) => void)
-      | null = null
+    let resolveGenerate: ((value: unknown) => void) | null = null
 
     ;(modelApis.getUnifiedModels as jest.Mock).mockResolvedValue({ data: [] })
     ;(taskApis.generatePromptDraftStream as jest.Mock).mockImplementation(
       () =>
         new Promise(resolve => {
-          resolveGenerate = resolve
+          resolveGenerate = resolve as (value: unknown) => void
         })
     )
 
@@ -469,7 +461,8 @@ describe('PromptDraftDialog', () => {
 
     rerender(<PromptDraftDialog open={false} onOpenChange={onOpenChange} taskId={1} />)
 
-    resolveGenerate?.({
+     
+    resolveGenerate!({
       title: '隐藏版本',
       prompt: '这份结果不该在关闭后写入本地存储。',
       model: 'gpt-5.4',

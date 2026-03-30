@@ -207,7 +207,8 @@ export function PromptDraftDialog({ open, onOpenChange, taskId }: PromptDraftDia
     source: 'initial' | 'regenerate' | 'rollback'
   ) => {
     if (!conversationStorageKey && !taskId) return null
-    const nextState = appendPromptDraftVersion(conversationStorageKey ?? taskId, draft, source)
+    const key = (conversationStorageKey ?? taskId) as string | number
+    const nextState = appendPromptDraftVersion(key, draft, source)
     setVersionsState(nextState)
     setComparisonState(null)
     return nextState
