@@ -7,6 +7,8 @@ from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
+from app.services import prompt_draft_service
+
 
 def _auth_header(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
@@ -68,6 +70,44 @@ def test_generate_prompt_draft_invalid_conversation(
 
     assert response.status_code == 400
     assert response.json()["detail"] == "Conversation is too short to generate prompt"
+
+
+def test_generate_prompt_draft_requires_available_model(
+    test_client: TestClient, test_token: str
+):
+    with patch(
+        "app.api.endpoints.adapter.tasks.prompt_draft_service.generate_prompt_draft",
+        side_effect=prompt_draft_service.PromptDraftModelUnavailableError(
+            "prompt_draft_model_unavailable"
+        ),
+    ):
+        response = test_client.post(
+            "/api/tasks/1/prompt-drafts/generate",
+            headers=_auth_header(test_token),
+            json={},
+        )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "No available model for prompt draft generation"
+
+
+def test_generate_prompt_draft_returns_502_when_generation_fails(
+    test_client: TestClient, test_token: str
+):
+    with patch(
+        "app.api.endpoints.adapter.tasks.prompt_draft_service.generate_prompt_draft",
+        side_effect=prompt_draft_service.PromptDraftGenerationFailedError(
+            "prompt_draft_generation_failed"
+        ),
+    ):
+        response = test_client.post(
+            "/api/tasks/1/prompt-drafts/generate",
+            headers=_auth_header(test_token),
+            json={},
+        )
+
+    assert response.status_code == 502
+    assert response.json()["detail"] == "Prompt draft generation failed"
 
 
 def test_generate_prompt_draft_stream_success(test_client: TestClient, test_token: str):

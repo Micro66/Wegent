@@ -10,15 +10,19 @@ from datetime import datetime, timezone
 from typing import Any, AsyncIterator
 
 from app.services import chat_shell_model_service
-from app.services.prompt_draft.fallback import _looks_like_meta_prompt
 from app.services.prompt_draft.generation import safe_model_config_for_logging
 from app.services.prompt_draft.prompt_contract import (
     PROMPT_SECTION_TITLES,
     normalize_prompt_markdown,
 )
+from app.services.prompt_draft.validation import (
+    TITLE_MAX_LENGTH,
+    looks_like_meta_prompt,
+    normalize_title_text,
+    validate_title_contract,
+)
 
 logger = logging.getLogger(__name__)
-TITLE_MAX_LENGTH = 18
 GENERATION_METADATA = {
     "history_limit": 0,
     "enable_tools": False,
@@ -35,7 +39,7 @@ def validate_prompt_contract(prompt: str) -> None:
     for section_title in PROMPT_SECTION_TITLES:
         if f"## {section_title}" not in prompt:
             raise ValueError("invalid_prompt_contract")
-    if _looks_like_meta_prompt(prompt):
+    if looks_like_meta_prompt(prompt):
         raise ValueError("prompt_echoed_generation_instructions")
 
 
@@ -137,19 +141,17 @@ def build_title_generation_system_prompt() -> str:
     )
 
 
-def normalize_title(title: str, *, fallback: str) -> str:
-    normalized = title.strip().strip('"').strip("'")
-    if not normalized or _looks_like_meta_title(normalized):
-        normalized = fallback.strip()
-    if len(normalized) > TITLE_MAX_LENGTH:
-        normalized = normalized[:TITLE_MAX_LENGTH]
-    return normalized
-
-
-def _looks_like_meta_title(title: str) -> bool:
-    from app.services.prompt_draft.fallback import _looks_like_meta_title as _inner
-
-    return _inner(title)
+def build_title_retry_message(invalid_title: str) -> dict[str, str]:
+    return {
+        "role": "user",
+        "content": (
+            "你刚才生成的标题不合格。"
+            "标题必须描述这个提示词对应的真实任务领域或协作角色，"
+            "不得描述“会话提炼”“总结”“prompt生成”“草案”等元过程。"
+            "只输出一个标题文本，不要解释。\n\n"
+            f"无效标题如下：\n{invalid_title}"
+        ),
+    }
 
 
 def build_prompt_retry_message(invalid_prompt: str) -> dict[str, str]:
@@ -221,7 +223,6 @@ async def run_skill_generation(
     selected_model_name: str,
     task_id: int,
     user_id: int,
-    fallback_title: str,
     current_prompt: str | None = None,
     regenerate: bool = False,
 ) -> dict[str, Any]:
@@ -260,9 +261,14 @@ async def run_skill_generation(
         metadata=TITLE_METADATA,
         model_config=model_config,
     )
-    title = normalize_title(title, fallback=fallback_title)
-    if not title:
-        raise ValueError("invalid_model_output")
+    title = await generate_title_text(
+        model_id=model_id,
+        input_messages=title_messages,
+        prompt_instructions=build_title_generation_system_prompt(),
+        metadata=TITLE_METADATA,
+        model_config=model_config,
+        initial_title=title,
+    )
 
     return {
         "title": title,
@@ -311,14 +317,58 @@ async def stream_prompt_text_generation(
             yield delta
 
 
+async def generate_title_text(
+    *,
+    model_id: str,
+    input_messages: list[dict[str, str]],
+    prompt_instructions: str,
+    metadata: dict[str, Any],
+    model_config: dict[str, Any],
+    initial_title: str | None = None,
+) -> str:
+    title = initial_title
+    if title is None:
+        title = await chat_shell_model_service.complete_text(
+            model=model_id,
+            input_messages=input_messages,
+            instructions=prompt_instructions,
+            metadata=metadata,
+            model_config=model_config,
+        )
+
+    normalized_title = normalize_title_text(title or "")
+    try:
+        validate_title_contract(normalized_title)
+        return normalized_title
+    except ValueError as exc:
+        if str(exc) not in {"invalid_model_output", "invalid_title_contract"}:
+            raise
+
+    retry_messages = [*input_messages, build_title_retry_message(title or "")]
+    logger.info(
+        "Prompt draft title-generation retry payload: model=%s instructions=%s input_messages=%s metadata=%s model_config=%s",
+        model_id,
+        prompt_instructions,
+        json.dumps(retry_messages, ensure_ascii=False),
+        json.dumps(metadata, ensure_ascii=False),
+        safe_model_config_for_logging(model_config),
+    )
+    retry_title = await chat_shell_model_service.complete_text(
+        model=model_id,
+        input_messages=retry_messages,
+        instructions=prompt_instructions,
+        metadata=metadata,
+        model_config=model_config,
+    )
+    normalized_retry_title = normalize_title_text(retry_title or "")
+    validate_title_contract(normalized_retry_title)
+    return normalized_retry_title
+
+
 async def generate_prompt_draft_stream_result(
     *,
-    task_id: int,
-    user_id: int,
     selected_model: str,
     model_config: dict[str, Any],
-    fallback_title: str,
-    fallback_prompt: str,
     conversation_blocks: list[tuple[str, str]],
     current_prompt: str | None = None,
     regenerate: bool = False,
@@ -331,20 +381,32 @@ async def generate_prompt_draft_stream_result(
     )
     prompt_instructions = build_prompt_generation_system_prompt()
 
-    try:
-        chunks: list[str] = []
-        async for delta in stream_prompt_text_generation(
+    chunks: list[str] = []
+    async for delta in stream_prompt_text_generation(
+        model_id=model_id,
+        input_messages=input_messages,
+        prompt_instructions=prompt_instructions,
+        metadata=GENERATION_METADATA,
+        model_config=model_config,
+    ):
+        chunks.append(delta)
+        yield {"type": "prompt_delta", "delta": delta}
+
+    prompt_text = normalize_prompt_markdown("".join(chunks).strip())
+    if not prompt_text:
+        prompt_text = await generate_prompt_text(
             model_id=model_id,
             input_messages=input_messages,
             prompt_instructions=prompt_instructions,
             metadata=GENERATION_METADATA,
             model_config=model_config,
-        ):
-            chunks.append(delta)
-            yield {"type": "prompt_delta", "delta": delta}
-
-        prompt_text = normalize_prompt_markdown("".join(chunks).strip())
-        if not prompt_text:
+        )
+    else:
+        try:
+            validate_prompt_contract(prompt_text)
+        except ValueError as exc:
+            if str(exc) != "prompt_echoed_generation_instructions":
+                raise
             prompt_text = await generate_prompt_text(
                 model_id=model_id,
                 input_messages=input_messages,
@@ -352,75 +414,45 @@ async def generate_prompt_draft_stream_result(
                 metadata=GENERATION_METADATA,
                 model_config=model_config,
             )
-        else:
-            try:
-                validate_prompt_contract(prompt_text)
-            except ValueError as exc:
-                if str(exc) != "prompt_echoed_generation_instructions":
-                    raise
-                prompt_text = await generate_prompt_text(
-                    model_id=model_id,
-                    input_messages=input_messages,
-                    prompt_instructions=prompt_instructions,
-                    metadata=GENERATION_METADATA,
-                    model_config=model_config,
-                )
-        yield {"type": "prompt_done", "prompt": prompt_text}
+    yield {"type": "prompt_done", "prompt": prompt_text}
 
-        title_messages = build_title_generation_messages(prompt_text)
-        title_instructions = build_title_generation_system_prompt()
-        title_text = await chat_shell_model_service.complete_text(
-            model=model_id,
-            input_messages=title_messages,
-            instructions=title_instructions,
-            metadata=TITLE_METADATA,
-            model_config=model_config,
-        )
-        logger.info(
-            "Prompt draft stream title-generation request payload: model=%s "
-            "instructions=%s input_messages=%s metadata=%s model_config=%s",
-            model_id,
-            title_instructions,
-            json.dumps(title_messages, ensure_ascii=False),
-            json.dumps(TITLE_METADATA, ensure_ascii=False),
-            safe_model_config_for_logging(model_config),
-        )
-        title_text = normalize_title(title_text, fallback=fallback_title)
-        if not title_text:
-            raise ValueError("invalid_model_output")
-        yield {"type": "title_done", "title": title_text}
-        yield {
-            "type": "completed",
-            "data": {
-                "title": title_text,
-                "prompt": prompt_text,
-                "model": selected_model,
-                "version": 1,
-                "created_at": datetime.now(timezone.utc).isoformat(),
-            },
-        }
-    except Exception:
-        logger.warning(
-            "Prompt draft streaming generation failed via chat_shell, using dynamic fallback: "
-            "task_id=%s user_id=%s model=%s",
-            task_id,
-            user_id,
-            selected_model,
-            exc_info=True,
-        )
-        created_at = datetime.now(timezone.utc).isoformat()
-        yield {"type": "prompt_done", "prompt": fallback_prompt}
-        yield {"type": "title_done", "title": fallback_title}
-        yield {
-            "type": "completed",
-            "data": {
-                "title": fallback_title,
-                "prompt": fallback_prompt,
-                "model": selected_model,
-                "version": 1,
-                "created_at": created_at,
-            },
-        }
+    title_messages = build_title_generation_messages(prompt_text)
+    title_instructions = build_title_generation_system_prompt()
+    title_text = await chat_shell_model_service.complete_text(
+        model=model_id,
+        input_messages=title_messages,
+        instructions=title_instructions,
+        metadata=TITLE_METADATA,
+        model_config=model_config,
+    )
+    logger.info(
+        "Prompt draft stream title-generation request payload: model=%s "
+        "instructions=%s input_messages=%s metadata=%s model_config=%s",
+        model_id,
+        title_instructions,
+        json.dumps(title_messages, ensure_ascii=False),
+        json.dumps(TITLE_METADATA, ensure_ascii=False),
+        safe_model_config_for_logging(model_config),
+    )
+    title_text = await generate_title_text(
+        model_id=model_id,
+        input_messages=title_messages,
+        prompt_instructions=title_instructions,
+        metadata=TITLE_METADATA,
+        model_config=model_config,
+        initial_title=title_text,
+    )
+    yield {"type": "title_done", "title": title_text}
+    yield {
+        "type": "completed",
+        "data": {
+            "title": title_text,
+            "prompt": prompt_text,
+            "model": selected_model,
+            "version": 1,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        },
+    }
 
 
 __all__ = [
@@ -428,12 +460,13 @@ __all__ = [
     "TITLE_METADATA",
     "build_generation_messages",
     "build_prompt_generation_system_prompt",
+    "build_title_retry_message",
     "build_title_generation_messages",
     "build_title_generation_system_prompt",
     "format_conversation_material",
     "generate_prompt_draft_stream_result",
     "generate_prompt_text",
-    "normalize_title",
+    "generate_title_text",
     "run_skill_generation",
     "stream_prompt_text_generation",
     "validate_prompt_contract",

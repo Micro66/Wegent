@@ -310,6 +310,13 @@ def generate_task_prompt_draft(
         raise HTTPException(
             status_code=400, detail="Conversation is too short to generate prompt"
         )
+    except prompt_draft_service.PromptDraftModelUnavailableError:
+        raise HTTPException(
+            status_code=400,
+            detail="No available model for prompt draft generation",
+        )
+    except prompt_draft_service.PromptDraftGenerationFailedError:
+        raise HTTPException(status_code=502, detail="Prompt draft generation failed")
     except ValueError as exc:
         if str(exc) == "task_not_found":
             raise HTTPException(status_code=404, detail="Task not found")
@@ -343,6 +350,11 @@ async def generate_task_prompt_draft_stream(
     except prompt_draft_service.PromptDraftConversationTooShortError:
         raise HTTPException(
             status_code=400, detail="Conversation is too short to generate prompt"
+        )
+    except prompt_draft_service.PromptDraftModelUnavailableError:
+        raise HTTPException(
+            status_code=400,
+            detail="No available model for prompt draft generation",
         )
     except ValueError as exc:
         if str(exc) == "task_not_found":

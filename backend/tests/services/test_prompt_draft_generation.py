@@ -2,8 +2,8 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from app.services.prompt_draft.fallback import build_dynamic_fallback
 from app.services.prompt_draft.generation import safe_model_config_for_logging
+from app.services.prompt_draft.validation import looks_like_meta_title
 
 
 def test_safe_model_config_for_logging_masks_secrets():
@@ -20,15 +20,6 @@ def test_safe_model_config_for_logging_masks_secrets():
     assert '"model_id": "gpt-test"' in rendered
 
 
-def test_build_dynamic_fallback_uses_flowchart_identity_for_mermaid_requests():
-    title, prompt = build_dynamic_fallback(
-        conversation_blocks=[
-            ("user", "帮我创建一个 mermaid 流程图"),
-            ("assistant", "请告诉我主要步骤"),
-        ],
-        task_title="",
-    )
-
-    assert title == "流程图协作提示词"
-    assert "你是流程图协作助手" in prompt
-    assert "\n\n## 输出要求\n" in prompt
+def test_looks_like_meta_title_detects_repeated_meta_output():
+    assert looks_like_meta_title("会话提炼协作规则生成提示词会话提炼协")
+    assert not looks_like_meta_title("流程图协作提示词")

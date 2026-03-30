@@ -14,6 +14,8 @@ from app.models.task import TaskResource
 from app.models.user import User
 from app.services.prompt_draft_service import (
     PromptDraftConversationTooShortError,
+    PromptDraftGenerationFailedError,
+    PromptDraftModelUnavailableError,
     PromptDraftTaskNotFoundError,
     _stream_prompt_text_generation,
     generate_prompt_draft,
@@ -222,20 +224,52 @@ def test_generate_prompt_draft_success_returns_prompt_contract(
     _add_user_subtask(test_db, test_user, task, "以后回答先给结论，再给执行步骤。")
     _add_assistant_subtask(test_db, test_user, task, "已收到，我会先给结论。")
 
-    result = generate_prompt_draft(
-        db=test_db,
-        task_id=task.id,
-        current_user=test_user,
-        model=None,
-        source="pet_panel",
+    generated_prompt = "\n".join(
+        [
+            "你是协作助手，负责将需求转为可执行方案。",
+            "",
+            "## 你的工作方式",
+            "- 先结论后步骤。",
+            "",
+            "## 处理任务时请遵循以下原则",
+            "- 方案可执行、可复用。",
+            "",
+            "## 输出要求",
+            "- 结构清晰。",
+        ]
     )
+
+    with (
+        patch(
+            "app.services.prompt_draft_service._resolve_model_config",
+            return_value=(
+                {
+                    "provider": "openai",
+                    "model_id": "gpt-test",
+                    "modelType": "llm",
+                },
+                "gpt-test",
+            ),
+        ),
+        patch(
+            "app.services.prompt_draft_service.chat_shell_model_service.complete_text",
+            new=AsyncMock(side_effect=[generated_prompt, "协作提示词"]),
+        ),
+    ):
+        result = generate_prompt_draft(
+            db=test_db,
+            task_id=task.id,
+            current_user=test_user,
+            model=None,
+            source="pet_panel",
+        )
 
     assert result["title"] == "协作提示词"
     assert result["prompt"].startswith("你是")
     assert "\n\n## 你的工作方式\n" in result["prompt"]
     assert "\n\n## 处理任务时请遵循以下原则\n" in result["prompt"]
     assert "\n\n## 输出要求\n" in result["prompt"]
-    assert result["model"] == ""
+    assert result["model"] == "gpt-test"
     assert result["version"] == 1
     assert result["created_at"] is not None
 
@@ -251,6 +285,23 @@ def test_generate_prompt_draft_model_not_found(test_db: Session, test_user: User
             task_id=task.id,
             current_user=test_user,
             model="missing-model",
+            source="pet_panel",
+        )
+
+
+def test_generate_prompt_draft_requires_available_model(
+    test_db: Session, test_user: User
+):
+    task = _create_task(test_db, test_user)
+    _add_user_subtask(test_db, test_user, task, "请先给结论。")
+    _add_assistant_subtask(test_db, test_user, task, "结论是可行。")
+
+    with pytest.raises(PromptDraftModelUnavailableError):
+        generate_prompt_draft(
+            db=test_db,
+            task_id=task.id,
+            current_user=test_user,
+            model=None,
             source="pet_panel",
         )
 
@@ -469,7 +520,7 @@ def test_generate_prompt_draft_retries_when_first_prompt_echoes_extraction_task(
     assert "会话提炼助手" in retry_call["input_messages"][2]["content"]
 
 
-def test_generate_prompt_draft_uses_fallback_title_when_title_is_meta(
+def test_generate_prompt_draft_retries_when_title_is_meta(
     test_db: Session, test_user: User
 ):
     task = _create_task(test_db, test_user)
@@ -509,9 +560,10 @@ def test_generate_prompt_draft_uses_fallback_title_when_title_is_meta(
                 side_effect=[
                     valid_prompt,
                     "会话提炼协作规则生成提示词会话提炼协",
+                    "流程图协作提示词",
                 ]
             ),
-        ),
+        ) as mock_complete_text,
     ):
         result = generate_prompt_draft(
             db=test_db,
@@ -522,6 +574,15 @@ def test_generate_prompt_draft_uses_fallback_title_when_title_is_meta(
         )
 
     assert result["title"] == "流程图协作提示词"
+    assert mock_complete_text.await_count == 3
+
+    retry_call = mock_complete_text.await_args_list[2].kwargs
+    assert len(retry_call["input_messages"]) == 2
+    assert "你刚才生成的标题不合格" in retry_call["input_messages"][1]["content"]
+    assert (
+        "会话提炼协作规则生成提示词会话提炼协"
+        in retry_call["input_messages"][1]["content"]
+    )
 
 
 def test_generate_prompt_draft_logs_do_not_include_model_secrets(
@@ -576,6 +637,40 @@ def test_generate_prompt_draft_logs_do_not_include_model_secrets(
     )
     assert "sk-secret-value" not in logged_text
     assert "top-secret-header" not in logged_text
+
+
+def test_generate_prompt_draft_raises_when_chat_shell_generation_fails(
+    test_db: Session, test_user: User
+):
+    task = _create_task(test_db, test_user)
+    _add_user_subtask(test_db, test_user, task, "先总结，再给执行步骤。")
+    _add_assistant_subtask(test_db, test_user, task, "已收到，我会按这个结构回答。")
+
+    with (
+        patch(
+            "app.services.prompt_draft_service._resolve_model_config",
+            return_value=(
+                {
+                    "provider": "openai",
+                    "model_id": "gpt-test",
+                    "modelType": "llm",
+                },
+                "gpt-test",
+            ),
+        ),
+        patch(
+            "app.services.prompt_draft_service.chat_shell_model_service.complete_text",
+            new=AsyncMock(side_effect=RuntimeError("boom")),
+        ),
+    ):
+        with pytest.raises(PromptDraftGenerationFailedError):
+            generate_prompt_draft(
+                db=test_db,
+                task_id=task.id,
+                current_user=test_user,
+                model="gpt-test",
+                source="pet_panel",
+            )
 
 
 def test_generate_prompt_draft_normalizes_single_line_prompt_to_markdown(
@@ -659,3 +754,58 @@ async def test_stream_prompt_generation_logs_do_not_include_model_secrets():
     )
     assert "sk-stream-secret" not in logged_text
     assert "stream-secret" not in logged_text
+
+
+@pytest.mark.asyncio
+async def test_generate_prompt_draft_stream_requires_available_model(
+    test_db: Session, test_user: User
+):
+    task = _create_task(test_db, test_user)
+    _add_user_subtask(test_db, test_user, task, "请先给结论。")
+    _add_assistant_subtask(test_db, test_user, task, "结论是可行。")
+
+    with pytest.raises(PromptDraftModelUnavailableError):
+        async for _ in generate_prompt_draft_stream(
+            db=test_db,
+            task_id=task.id,
+            current_user=test_user,
+            model=None,
+            source="pet_panel",
+        ):
+            pass
+
+
+@pytest.mark.asyncio
+async def test_generate_prompt_draft_stream_raises_when_chat_shell_generation_fails(
+    test_db: Session, test_user: User
+):
+    task = _create_task(test_db, test_user)
+    _add_user_subtask(test_db, test_user, task, "帮我创建一个流程图")
+    _add_assistant_subtask(test_db, test_user, task, "先告诉我主题和主要步骤。")
+
+    with (
+        patch(
+            "app.services.prompt_draft_service._resolve_model_config",
+            return_value=(
+                {
+                    "provider": "openai",
+                    "model_id": "gpt-test",
+                    "modelType": "llm",
+                },
+                "gpt-test",
+            ),
+        ),
+        patch(
+            "app.services.prompt_draft_service.chat_shell_model_service.create_response",
+            new=AsyncMock(side_effect=RuntimeError("stream boom")),
+        ),
+    ):
+        with pytest.raises(PromptDraftGenerationFailedError):
+            async for _ in generate_prompt_draft_stream(
+                db=test_db,
+                task_id=task.id,
+                current_user=test_user,
+                model="gpt-test",
+                source="pet_panel",
+            ):
+                pass
