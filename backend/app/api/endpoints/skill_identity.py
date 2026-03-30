@@ -2,14 +2,15 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Internal API for skill identity verification."""
+"""Public API for skill identity verification."""
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 
+from app.core import security
 from app.services.auth import verify_skill_identity_token
 
-router = APIRouter(prefix="/skill-identity", tags=["internal-skill-identity"])
+router = APIRouter(prefix="/skill-identity", tags=["skill-identity"])
 
 
 class SkillIdentityVerifyRequest(BaseModel):
@@ -20,7 +21,10 @@ class SkillIdentityVerifyRequest(BaseModel):
 
 
 @router.post("/verify")
-def verify_skill_identity(request: SkillIdentityVerifyRequest) -> dict:
+def verify_skill_identity(
+    request: SkillIdentityVerifyRequest,
+    _: security.AuthContext = Depends(security.get_auth_context),
+) -> dict:
     """Verify that a skill identity token belongs to the claimed user."""
     if not request.user_name:
         return {"matched": False, "reason": "missing_user_name"}

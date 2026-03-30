@@ -10,7 +10,6 @@ from .bots import router as bots_router
 from .callback import router as callback_router
 from .chat_storage import router as chat_storage_router
 from .services import router as services_router
-from .skill_identity import router as skill_identity_router
 from .skills import router as skills_router
 from .subscriptions import router as subscriptions_router
 from .tables import router as tables_router
@@ -25,7 +24,6 @@ __all__ = [
     "callback_router",
     "chat_storage_router",
     "services_router",
-    "skill_identity_router",
     "skills_router",
     "subscriptions_router",
     "tables_router",
