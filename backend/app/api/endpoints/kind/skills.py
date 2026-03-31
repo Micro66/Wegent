@@ -285,7 +285,9 @@ def list_skills(
                     .filter(
                         TaskResource.id == task_id,
                         TaskResource.kind == "Task",
-                        TaskResource.is_active == TaskResource.STATE_ACTIVE,
+                        TaskResource.is_active.in_(
+                            [TaskResource.STATE_ACTIVE, TaskResource.STATE_SUBSCRIPTION]
+                        ),
                     )
                     .first()
                 )
@@ -1227,7 +1229,9 @@ def download_skill(
                 .filter(
                     TaskResource.id == task_id,
                     TaskResource.kind == "Task",
-                    TaskResource.is_active == TaskResource.STATE_ACTIVE,
+                    TaskResource.is_active.in_(
+                        [TaskResource.STATE_ACTIVE, TaskResource.STATE_SUBSCRIPTION]
+                    ),
                 )
                 .first()
             )

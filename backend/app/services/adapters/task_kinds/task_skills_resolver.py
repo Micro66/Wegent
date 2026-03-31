@@ -108,7 +108,9 @@ def resolve_task_skills(db: Session, *, task_id: int, user_id: int) -> Dict[str,
         .filter(
             TaskResource.id == task_id,
             TaskResource.kind == "Task",
-            TaskResource.is_active == TaskResource.STATE_ACTIVE,
+            TaskResource.is_active.in_(
+                [TaskResource.STATE_ACTIVE, TaskResource.STATE_SUBSCRIPTION]
+            ),
         )
         .first()
     )
