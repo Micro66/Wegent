@@ -2,65 +2,15 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Build a chat-native prompt management workflow that lets authorized users inspect, optimize, apply, and rollback an agent's base prompt through skill + MCP + chat blocks.
+**Goal:** Build a chat-native prompt management workflow that lets authorized users inspect, optimize, and apply an agent's base prompt through skill + MCP + chat blocks, without adding new database tables.
 
-**Architecture:** Add a new `prompt-manager` skill backed by a dedicated Prompt MCP server that reuses the existing `@mcp_tool` auto-registration pattern. Persist prompt candidates and prompt versions in backend tables, expose prompt operations through MCP tools, and render prompt-specific blocks in the chat message mixed-content pipeline.
+**Architecture:** Add a new `prompt-manager` skill backed by a dedicated Prompt MCP server that reuses the existing `@mcp_tool` auto-registration pattern. Resolve the editable prompt from the existing Team/adapter path, generate prompt candidates on demand, and pass candidate state through chat blocks instead of database persistence.
 
-**Tech Stack:** FastAPI, SQLAlchemy, Alembic, FastMCP, Pydantic, Next.js 15, React 19, TypeScript, Tailwind CSS, Playwright, pytest, uv.
+**Tech Stack:** FastAPI, SQLAlchemy, FastMCP, Pydantic, Next.js 15, React 19, TypeScript, Tailwind CSS, Playwright, pytest, uv.
 
 ---
 
-### Task 1: Add backend persistence models for prompt candidates and versions
-
-**Files:**
-- Create: `backend/app/models/prompt_candidate.py`
-- Create: `backend/app/models/prompt_version.py`
-- Modify: `backend/app/models/__init__.py`
-- Create: `backend/alembic/versions/<timestamp>_add_prompt_management_tables.py`
-- Test: `backend/tests/services/test_prompt_management_service.py`
-
-**Step 1: Write the failing model/service tests**
-
-```python
-from app.models.prompt_candidate import PromptCandidate
-from app.models.prompt_version import PromptVersion
-
-
-def test_prompt_candidate_can_link_to_parent_candidate():
-    candidate = PromptCandidate(base_candidate_id=1)
-    assert candidate.base_candidate_id == 1
-
-
-def test_prompt_version_supports_parent_version_chain():
-    version = PromptVersion(parent_version_id=2)
-    assert version.parent_version_id == 2
-```
-
-**Step 2: Run test to verify it fails**
-
-Run: `cd backend && uv run pytest backend/tests/services/test_prompt_management_service.py -v`
-Expected: FAIL with import or table/model errors.
-
-**Step 3: Write minimal implementation**
-
-- Add SQLAlchemy models for prompt candidates and prompt versions.
-- Add indexes for `team_id`, `task_id`, `created_at`.
-- Add enum-like string fields for candidate status and version source.
-- Add Alembic migration that creates both tables.
-
-**Step 4: Run test to verify it passes**
-
-Run: `cd backend && uv run pytest backend/tests/services/test_prompt_management_service.py -v`
-Expected: PASS.
-
-**Step 5: Commit**
-
-```bash
-git add backend/app/models/prompt_candidate.py backend/app/models/prompt_version.py backend/app/models/__init__.py backend/alembic/versions/<timestamp>_add_prompt_management_tables.py backend/tests/services/test_prompt_management_service.py
-git commit -m "feat(backend): add prompt management persistence models"
-```
-
-### Task 2: Build backend prompt management service and permission checks
+### Task 1: Build backend prompt management service on top of existing Team prompt storage
 
 **Files:**
 - Create: `backend/app/services/prompt_management/service.py`
@@ -77,15 +27,15 @@ def test_get_base_prompt_requires_edit_permission():
     assert result["error"] == "permission_denied"
 
 
-def test_apply_prompt_candidate_saves_previous_version_before_update():
-    result = prompt_management_service.apply_prompt_candidate(...)
-    assert result["previous_version_id"] is not None
+def test_apply_prompt_revision_updates_team_prompt():
+    result = prompt_management_service.apply_prompt_revision(...)
+    assert result["applied_prompt"] == "new prompt"
 ```
 
 **Step 2: Run test to verify it fails**
 
 Run: `cd backend && uv run pytest backend/tests/services/test_prompt_management_service.py -v`
-Expected: FAIL because service functions do not exist.
+Expected: FAIL because prompt management service does not exist.
 
 **Step 3: Write minimal implementation**
 
@@ -93,11 +43,8 @@ Expected: FAIL because service functions do not exist.
 - Reuse existing Team edit permission rules (`Developer+` for group teams).
 - Implement:
   - `get_base_prompt`
-  - `create_prompt_candidate`
-  - `apply_prompt_candidate`
-  - `rollback_prompt`
-  - `list_prompt_versions`
-- Ensure apply records the old prompt as a `PromptVersion` before updating current prompt.
+  - `apply_prompt_revision`
+- Ensure updates go through the existing Team prompt storage path instead of creating new models.
 
 **Step 4: Run test to verify it passes**
 
@@ -111,7 +58,7 @@ git add backend/app/services/prompt_management/service.py backend/app/services/p
 git commit -m "feat(backend): add prompt management service"
 ```
 
-### Task 3: Add prompt optimization generation flow
+### Task 2: Add prompt optimization generation flow without persistence
 
 **Files:**
 - Create: `backend/app/services/prompt_management/optimizer.py`
@@ -121,15 +68,15 @@ git commit -m "feat(backend): add prompt management service"
 **Step 1: Write the failing optimization tests**
 
 ```python
-def test_propose_prompt_revision_returns_candidate_with_diff():
+def test_propose_prompt_revision_returns_diff_and_optimized_prompt():
     result = prompt_management_service.propose_prompt_revision(...)
-    assert result["candidate_id"] is not None
+    assert result["optimized_prompt"]
     assert result["diff"]
 
 
-def test_propose_prompt_revision_can_use_base_candidate():
-    result = prompt_management_service.propose_prompt_revision(base_candidate_id=1, ...)
-    assert result["original_prompt"] == "candidate prompt"
+def test_propose_prompt_revision_can_use_current_prompt_override():
+    result = prompt_management_service.propose_prompt_revision(current_prompt="candidate", ...)
+    assert result["original_prompt"] == "candidate"
 ```
 
 **Step 2: Run test to verify it fails**
@@ -139,13 +86,13 @@ Expected: FAIL because optimizer flow is missing.
 
 **Step 3: Write minimal implementation**
 
-- Add an optimizer abstraction that accepts current prompt, user feedback, and optional base candidate.
+- Add an optimizer abstraction that accepts current prompt and user feedback.
 - Produce:
   - optimized prompt
   - summary
   - line-based diff JSON
-- Persist result into `PromptCandidate`.
-- Keep the optimizer implementation isolated so model/provider logic can evolve later.
+- Do not persist candidate output to the database.
+- Accept optional `current_prompt` so frontend can submit the current candidate for repeated optimization.
 
 **Step 4: Run test to verify it passes**
 
@@ -156,10 +103,10 @@ Expected: PASS.
 
 ```bash
 git add backend/app/services/prompt_management/optimizer.py backend/app/services/prompt_management/service.py backend/tests/services/test_prompt_management_service.py
-git commit -m "feat(backend): add prompt revision candidate generation"
+git commit -m "feat(backend): add prompt revision generation"
 ```
 
-### Task 4: Expose prompt management via MCP tools using `@mcp_tool`
+### Task 3: Expose prompt management via MCP tools using `@mcp_tool`
 
 **Files:**
 - Create: `backend/app/mcp_server/tools/prompt.py`
@@ -192,9 +139,7 @@ Expected: FAIL because prompt MCP server and tools do not exist.
 - Add `prompt.py` MCP tools with `@mcp_tool(server="prompt")`:
   - `get_base_prompt`
   - `propose_prompt_revision`
-  - `apply_prompt_candidate`
-  - `rollback_prompt`
-  - `list_prompt_versions`
+  - `apply_prompt_revision`
 - Add a new FastMCP prompt server.
 - Register prompt tools in backend startup using the same pattern as knowledge MCP.
 - Add metadata helper and `/mcp/prompt/sse` endpoint wiring.
@@ -211,7 +156,7 @@ git add backend/app/mcp_server/tools/prompt.py backend/app/mcp_server/tools/__in
 git commit -m "feat(backend): expose prompt management over mcp"
 ```
 
-### Task 5: Add the `prompt-manager` skill definition
+### Task 4: Add the `prompt-manager` skill definition
 
 **Files:**
 - Create: `backend/init_data/skills/prompt-manager/SKILL.md`
@@ -237,7 +182,6 @@ Expected: FAIL because the skill file does not exist.
   - query current prompt
   - optimize prompt
   - do not auto-apply
-  - rollback only after user confirmation
   - deny without permission
 
 **Step 4: Run test to verify it passes**
@@ -252,7 +196,7 @@ git add backend/init_data/skills/prompt-manager/SKILL.md backend/tests/services/
 git commit -m "feat(skill): add prompt manager skill"
 ```
 
-### Task 6: Extend chat message block types for prompt blocks
+### Task 5: Extend chat message block types for prompt blocks
 
 **Files:**
 - Modify: `frontend/src/features/tasks/components/message/thinking/types.ts`
@@ -260,7 +204,6 @@ git commit -m "feat(skill): add prompt manager skill"
 - Create: `frontend/src/features/tasks/components/message/prompt/PromptViewBlock.tsx`
 - Create: `frontend/src/features/tasks/components/message/prompt/PromptCandidateBlock.tsx`
 - Create: `frontend/src/features/tasks/components/message/prompt/PromptAppliedBlock.tsx`
-- Create: `frontend/src/features/tasks/components/message/prompt/PromptRollbackBlock.tsx`
 - Test: `frontend/src/__tests__/features/tasks/components/message/prompt-blocks.test.tsx`
 
 **Step 1: Write the failing frontend rendering tests**
@@ -293,11 +236,11 @@ Expected: PASS.
 **Step 5: Commit**
 
 ```bash
-git add frontend/src/features/tasks/components/message/thinking/types.ts frontend/src/features/tasks/components/message/thinking/MixedContentView.tsx frontend/src/features/tasks/components/message/prompt/PromptViewBlock.tsx frontend/src/features/tasks/components/message/prompt/PromptCandidateBlock.tsx frontend/src/features/tasks/components/message/prompt/PromptAppliedBlock.tsx frontend/src/features/tasks/components/message/prompt/PromptRollbackBlock.tsx frontend/src/__tests__/features/tasks/components/message/prompt-blocks.test.tsx
+git add frontend/src/features/tasks/components/message/thinking/types.ts frontend/src/features/tasks/components/message/thinking/MixedContentView.tsx frontend/src/features/tasks/components/message/prompt/PromptViewBlock.tsx frontend/src/features/tasks/components/message/prompt/PromptCandidateBlock.tsx frontend/src/features/tasks/components/message/prompt/PromptAppliedBlock.tsx frontend/src/__tests__/features/tasks/components/message/prompt-blocks.test.tsx
 git commit -m "feat(frontend): render prompt management blocks"
 ```
 
-### Task 7: Wire prompt block actions to backend APIs/MCP-triggered operations
+### Task 6: Wire prompt block actions to backend APIs/MCP-triggered operations
 
 **Files:**
 - Create: `frontend/src/apis/prompt-management.ts`
@@ -313,7 +256,7 @@ git commit -m "feat(frontend): render prompt management blocks"
 it('calls apply api when user clicks replace prompt', async () => {
   render(<PromptCandidateBlock ... />)
   await user.click(screen.getByTestId('apply-prompt-button'))
-  expect(promptManagementApis.applyPromptCandidate).toHaveBeenCalledWith(123)
+  expect(promptManagementApis.applyPromptRevision).toHaveBeenCalled()
 })
 ```
 
@@ -324,10 +267,10 @@ Expected: FAIL because the API module and action handlers do not exist.
 
 **Step 3: Write minimal implementation**
 
-- Add frontend API wrapper for prompt-management endpoints if needed by chat action handlers.
-- Wire button clicks to apply and rollback actions.
+- Add frontend API wrapper for prompt-management actions.
+- Wire button clicks to apply prompt updates.
+- When user clicks “再次优化”, submit the current candidate prompt back to `propose_prompt_revision`.
 - Ensure success/error states update block UI without removing the chat history.
-- Preserve responsive behavior and existing chat message flow.
 
 **Step 4: Run test to verify it passes**
 
@@ -341,7 +284,7 @@ git add frontend/src/apis/prompt-management.ts frontend/src/features/tasks/compo
 git commit -m "feat(frontend): wire prompt management actions"
 ```
 
-### Task 8: Add end-to-end coverage and docs updates
+### Task 7: Add end-to-end coverage and docs updates
 
 **Files:**
 - Create: `frontend/e2e/tests/tasks/prompt-management.spec.ts`
@@ -352,14 +295,12 @@ git commit -m "feat(frontend): wire prompt management actions"
 **Step 1: Write the failing E2E scenario**
 
 ```ts
-test('authorized user can optimize, apply, and rollback prompt from chat', async ({ page }) => {
+test('authorized user can optimize and apply prompt from chat', async ({ page }) => {
   await page.getByTestId('chat-input').fill('帮我改下提示词')
   await page.getByTestId('send-button').click()
   await expect(page.getByTestId('prompt-candidate-block')).toBeVisible()
   await page.getByTestId('apply-prompt-button').click()
   await expect(page.getByTestId('prompt-applied-block')).toBeVisible()
-  await page.getByTestId('rollback-prompt-button').click()
-  await expect(page.getByTestId('prompt-rollback-block')).toBeVisible()
 })
 ```
 
@@ -386,7 +327,7 @@ git add frontend/e2e/tests/tasks/prompt-management.spec.ts docs/zh docs/en
 git commit -m "test(e2e): cover prompt management workflow"
 ```
 
-### Task 9: Full verification pass
+### Task 8: Full verification pass
 
 **Files:**
 - Modify: only files needed to fix verification failures
