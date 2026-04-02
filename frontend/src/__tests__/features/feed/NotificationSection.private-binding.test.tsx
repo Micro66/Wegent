@@ -72,6 +72,54 @@ function NotificationSectionHarness({
 }
 
 describe('NotificationSection private binding dialog', () => {
+  test('shows level helper text and switches it when notification level changes', async () => {
+    const user = userEvent.setup()
+
+    render(
+      <NotificationSectionHarness
+        availableChannels={[
+          {
+            id: 410,
+            name: '钉钉',
+            channel_type: 'dingtalk',
+            is_bound: true,
+          },
+        ]}
+        onStartBinding={jest.fn().mockResolvedValue(undefined)}
+        onCancelBinding={jest.fn().mockResolvedValue(undefined)}
+      />
+    )
+
+    expect(screen.getByText('通过 Messager 渠道发送通知')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('radio', { name: '默认' }))
+
+    expect(screen.getByText('在动态时间线中显示')).toBeInTheDocument()
+  })
+
+  test('renders dingtalk channel configuration as a visible panel instead of hidden options', () => {
+    render(
+      <NotificationSectionHarness
+        availableChannels={[
+          {
+            id: 410,
+            name: '钉钉',
+            channel_type: 'dingtalk',
+            is_bound: true,
+          },
+        ]}
+        onStartBinding={jest.fn().mockResolvedValue(undefined)}
+        onCancelBinding={jest.fn().mockResolvedValue(undefined)}
+      />
+    )
+
+    expect(screen.getByText('钉钉通知配置')).toBeInTheDocument()
+    expect(screen.queryByText('隐藏选项')).not.toBeInTheDocument()
+    expect(screen.getByRole('switch', { name: '启用私聊' })).toBeInTheDocument()
+    expect(screen.getByRole('switch', { name: '启用群聊' })).toBeInTheDocument()
+    expect(screen.getByText('已绑定至：当前私聊会话')).toBeInTheDocument()
+  })
+
   test('shows real-time private binding success after the channel becomes bound', async () => {
     const user = userEvent.setup()
     const onStartBinding = jest.fn().mockResolvedValue(undefined)
@@ -93,7 +141,7 @@ describe('NotificationSection private binding dialog', () => {
       />
     )
 
-    await user.click(screen.getByRole('checkbox', { name: '绑定到私聊' }))
+    await user.click(screen.getByRole('switch', { name: '启用私聊' }))
     await user.click(screen.getByTestId('private-binding-start-button'))
 
     await waitFor(() => {
@@ -166,11 +214,10 @@ describe('NotificationSection private binding dialog', () => {
 
     render(<GroupBindingHarness />)
 
-    await user.click(screen.getByRole('checkbox', { name: '绑定到群聊' }))
+    await user.click(screen.getByRole('switch', { name: '启用群聊' }))
 
     expect(screen.queryByTestId('group-binding-start-button')).not.toBeInTheDocument()
-    expect(screen.getByText('已绑定群聊')).toBeInTheDocument()
-    expect(screen.getByText('测试机器人')).toBeInTheDocument()
+    expect(screen.getByText('已绑定至：测试机器人')).toBeInTheDocument()
   })
 
   test('shows existing group binding even when group sending is disabled', () => {
@@ -218,8 +265,10 @@ describe('NotificationSection private binding dialog', () => {
 
     render(<DisabledGroupBindingHarness />)
 
-    expect(screen.getByText('已绑定群聊')).toBeInTheDocument()
-    expect(screen.getByText('测试机器人')).toBeInTheDocument()
-    expect(screen.getByText('已绑定群聊，但当前未启用群消息发送')).toBeInTheDocument()
+    expect(screen.getByText('已绑定至：测试机器人')).toBeInTheDocument()
+    expect(screen.getByRole('switch', { name: '启用群聊' })).toHaveAttribute(
+      'aria-checked',
+      'false'
+    )
   })
 })
