@@ -148,14 +148,33 @@ def resolve_task_skills(db: Session, *, task_id: int, user_id: int) -> Dict[str,
             team_namespace,
             team_name,
         )
+        fallback_skills = list(user_selected_skills)
+        fallback_skill_refs: Dict[str, Dict[str, Any]] = {}
+        fallback_preload_skill_refs: Dict[str, Dict[str, Any]] = {}
+        for requested_ref in requested_skill_refs:
+            skill_name = requested_ref["name"]
+            if skill_name not in fallback_skills:
+                fallback_skills.append(skill_name)
+            skill = find_skill_by_ref(
+                db,
+                skill_name=skill_name,
+                namespace=requested_ref["namespace"],
+                is_public=requested_ref["is_public"],
+                user_id=task_owner_id,
+                team_namespace=team_namespace or "default",
+            )
+            if skill:
+                ref_meta = build_skill_ref_meta(skill)
+                fallback_skill_refs[skill_name] = ref_meta
+                fallback_preload_skill_refs[skill_name] = ref_meta
         return {
             "task_id": task_id,
             "team_id": None,
             "team_namespace": team_namespace,
-            "skills": user_selected_skills,
-            "preload_skills": [],
-            "skill_refs": {},
-            "preload_skill_refs": {},
+            "skills": fallback_skills,
+            "preload_skills": fallback_skills,
+            "skill_refs": fallback_skill_refs,
+            "preload_skill_refs": fallback_preload_skill_refs,
         }
 
     team_crd = Team.model_validate(team.json)

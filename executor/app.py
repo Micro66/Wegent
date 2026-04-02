@@ -219,9 +219,8 @@ def _initialize_sandbox_claude(auth_token: str, task_id: str) -> None:
         **(skills_info.preload_skill_refs or {}),
     }
     logger.info(
-        "[SandboxInit] Resolved skill map prepared: keys=%s, android_skill_ref=%s",
+        "[SandboxInit] Resolved skill map prepared: keys=%s",
         sorted(resolved_skill_map.keys()),
-        resolved_skill_map.get("android-source-setup"),
     )
     result = downloader.download_and_deploy(
         all_skills,

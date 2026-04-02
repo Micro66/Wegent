@@ -189,16 +189,10 @@ def fetch_task_skills(task_id: str, auth_token: str) -> TaskSkillsInfo:
             )
             logger.info(
                 "[fetch_task_skills] Resolved refs for task %s: "
-                "skill_ref_keys=%s, preload_skill_ref_keys=%s, android_skill_ref=%s",
+                "skill_ref_keys=%s, preload_skill_ref_keys=%s",
                 task_id,
                 sorted((data.get("skill_refs", {}) or {}).keys()),
                 sorted((data.get("preload_skill_refs", {}) or {}).keys()),
-                (
-                    (data.get("preload_skill_refs", {}) or {}).get(
-                        "android-source-setup"
-                    )
-                    or (data.get("skill_refs", {}) or {}).get("android-source-setup")
-                ),
             )
             return TaskSkillsInfo(
                 task_id=data.get(

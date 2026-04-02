@@ -382,3 +382,64 @@ def test_resolve_task_skills_prefers_requested_skill_refs_over_subscription_and_
     assert result["skill_refs"]["shared-skill"]["skill_id"] == 22
     assert result["skill_refs"]["shared-skill"]["namespace"] == "chat-namespace"
     assert result["preload_skill_refs"]["shared-skill"]["skill_id"] == 22
+
+
+@pytest.mark.unit
+def test_resolve_task_skills_team_missing_still_uses_requested_skill_refs():
+    db = Mock(spec=Session)
+
+    mock_task = Mock(spec=TaskResource)
+    mock_task.id = 123
+    mock_task.user_id = 7
+    mock_task.kind = "Task"
+    mock_task.is_active = TaskResource.STATE_ACTIVE
+    mock_task.json = {"kind": "Task"}
+
+    mock_task_query = Mock()
+    mock_task_query.filter.return_value = mock_task_query
+    mock_task_query.first.return_value = mock_task
+    db.query.return_value = mock_task_query
+
+    task_crd = SimpleNamespace(
+        spec=SimpleNamespace(
+            teamRef=SimpleNamespace(name="missing-team", namespace="team-a"),
+        ),
+        metadata=SimpleNamespace(
+            labels={
+                "requestedSkillRefs": json.dumps(
+                    [
+                        {
+                            "name": "manual-skill",
+                            "namespace": "team-a",
+                            "is_public": False,
+                        }
+                    ]
+                )
+            }
+        ),
+    )
+
+    with (
+        patch(
+            "app.services.task_member_service.task_member_service.is_member",
+            return_value=True,
+        ),
+        patch(
+            "app.services.readers.kinds.kindReader.get_by_name_and_namespace",
+            return_value=None,
+        ),
+        patch(
+            "app.services.adapters.task_kinds.task_skills_resolver.Task.model_validate",
+            return_value=task_crd,
+        ),
+        patch(
+            "app.services.adapters.task_kinds.task_skills_resolver.find_skill_by_ref",
+            return_value=SimpleNamespace(id=22, namespace="team-a", user_id=7),
+        ),
+    ):
+        result = resolve_task_skills(db, task_id=123, user_id=99)
+
+    assert result["skills"] == ["manual-skill"]
+    assert result["preload_skills"] == ["manual-skill"]
+    assert result["skill_refs"]["manual-skill"]["skill_id"] == 22
+    assert result["preload_skill_refs"]["manual-skill"]["skill_id"] == 22
