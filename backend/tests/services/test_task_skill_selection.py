@@ -58,3 +58,35 @@ def test_parse_requested_skill_refs_from_labels_returns_normalized_refs():
             "is_public": False,
         }
     ]
+
+
+def test_build_task_skill_labels_deduplicates_by_name_with_last_value_winning():
+    labels = build_task_skill_labels(
+        [
+            {
+                "name": "android-source-setup",
+                "namespace": "mobile-a",
+                "is_public": False,
+            },
+            {"name": "pdf", "namespace": "default", "is_public": True},
+            {
+                "name": "android-source-setup",
+                "namespace": "mobile-b",
+                "is_public": False,
+            },
+        ]
+    )
+
+    assert json.loads(labels["additionalSkills"]) == ["pdf", "android-source-setup"]
+    assert json.loads(labels["requestedSkillRefs"]) == [
+        {
+            "name": "pdf",
+            "namespace": "default",
+            "is_public": True,
+        },
+        {
+            "name": "android-source-setup",
+            "namespace": "mobile-b",
+            "is_public": False,
+        },
+    ]

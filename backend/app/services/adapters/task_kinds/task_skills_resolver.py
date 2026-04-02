@@ -229,6 +229,33 @@ def resolve_task_skills(db: Session, *, task_id: int, user_id: int) -> Dict[str,
                 ghost_ref,
             )
 
+    subscription_skill_refs = _get_subscription_skill_refs_for_task(db, task_id=task_id)
+    if subscription_skill_refs:
+        for requested_ref in subscription_skill_refs:
+            skill_name = requested_ref.name
+            all_skills.add(skill_name)
+            all_preload_skills.add(skill_name)
+            skill = find_skill_by_ref(
+                db,
+                skill_name=skill_name,
+                namespace=requested_ref.namespace,
+                is_public=requested_ref.is_public,
+                user_id=task_owner_id,
+                team_namespace=team.namespace or "default",
+            )
+            if skill:
+                ref_meta = build_skill_ref_meta(skill)
+                skill_refs[skill_name] = ref_meta
+                preload_skill_refs[skill_name] = ref_meta
+            else:
+                logger.warning(
+                    "[get_task_skills] Subscription skill ref could not be resolved for task %s: %s/%s public=%s",
+                    task_id,
+                    requested_ref.namespace,
+                    requested_ref.name,
+                    requested_ref.is_public,
+                )
+
     if requested_skill_refs:
         for requested_ref in requested_skill_refs:
             skill_name = requested_ref["name"]
@@ -266,33 +293,6 @@ def resolve_task_skills(db: Session, *, task_id: int, user_id: int) -> Dict[str,
         skill_refs.update(resolved_user_refs)
         for skill_name, ref_meta in resolved_user_refs.items():
             preload_skill_refs[skill_name] = ref_meta
-
-    subscription_skill_refs = _get_subscription_skill_refs_for_task(db, task_id=task_id)
-    if subscription_skill_refs:
-        for requested_ref in subscription_skill_refs:
-            skill_name = requested_ref.name
-            all_skills.add(skill_name)
-            all_preload_skills.add(skill_name)
-            skill = find_skill_by_ref(
-                db,
-                skill_name=skill_name,
-                namespace=requested_ref.namespace,
-                is_public=requested_ref.is_public,
-                user_id=task_owner_id,
-                team_namespace=team.namespace or "default",
-            )
-            if skill:
-                ref_meta = build_skill_ref_meta(skill)
-                skill_refs[skill_name] = ref_meta
-                preload_skill_refs[skill_name] = ref_meta
-            else:
-                logger.warning(
-                    "[get_task_skills] Subscription skill ref could not be resolved for task %s: %s/%s public=%s",
-                    task_id,
-                    requested_ref.namespace,
-                    requested_ref.name,
-                    requested_ref.is_public,
-                )
 
     for skill_name in list(all_preload_skills):
         if skill_name not in preload_skill_refs and skill_name in skill_refs:

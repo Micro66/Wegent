@@ -17,8 +17,7 @@ def normalize_requested_skill_refs(
     skills: Optional[List[Any]],
 ) -> List[Dict[str, Any]]:
     """Normalize task-scoped requested skills to serializable dicts."""
-    normalized: List[Dict[str, Any]] = []
-    seen_names: set[str] = set()
+    normalized_by_name: Dict[str, Dict[str, Any]] = {}
 
     for skill in skills or []:
         if isinstance(skill, BaseModel):
@@ -38,19 +37,19 @@ def normalize_requested_skill_refs(
                 else False
             )
 
-        if not isinstance(name, str) or not name or name in seen_names:
+        if not isinstance(name, str) or not name:
             continue
 
-        normalized.append(
-            {
-                "name": name,
-                "namespace": namespace or "default",
-                "is_public": is_public,
-            }
-        )
-        seen_names.add(name)
+        normalized_skill = {
+            "name": name,
+            "namespace": namespace or "default",
+            "is_public": is_public,
+        }
+        if name in normalized_by_name:
+            del normalized_by_name[name]
+        normalized_by_name[name] = normalized_skill
 
-    return normalized
+    return list(normalized_by_name.values())
 
 
 def build_task_skill_labels(skills: Optional[List[Any]]) -> Dict[str, str]:
