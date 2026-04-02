@@ -13,13 +13,14 @@ from app.models.kind import Kind
 from app.models.user import User
 from app.schemas.kind import Bot, Ghost, Team
 from app.services.readers import KindType, kindReader
-from app.services.share.knowledge_share_service import KnowledgeShareService
 
 
 def _get_accessible_knowledge_base(
     db: Session, user_id: int, knowledge_base_id: int
 ) -> Kind | None:
     """Return the knowledge base if the current user can access it."""
+    from app.services.share.knowledge_share_service import KnowledgeShareService
+
     return KnowledgeShareService()._get_resource(db, knowledge_base_id, user_id)
 
 
