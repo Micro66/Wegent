@@ -216,7 +216,17 @@
     "custom_shell": "自定义",
     "public_model": "公共",
     "fine_tune_prompt": "微调提示词",
-    "no_model_binding": "不绑定模型"
+    "no_model_binding": "不绑定模型",
+    "default_knowledge_bases": "默认知识库",
+    "default_knowledge_bases_optional": "可选",
+    "default_knowledge_bases_search_placeholder": "搜索知识库",
+    "default_knowledge_bases_used_for_new_chats": "用于初始化新聊天的默认知识库。",
+    "default_knowledge_bases_append_hint": "聊天时手动选择的知识库会在后续追加，不会覆盖这里的默认配置。",
+    "default_knowledge_bases_empty_selection": "尚未选择默认知识库",
+    "default_knowledge_bases_loading": "知识库加载中...",
+    "default_knowledge_bases_load_failed": "知识库加载失败",
+    "default_knowledge_bases_no_match": "没有匹配的知识库",
+    "default_knowledge_bases_no_options": "暂无可用知识库"
   },
   "messages": {
     "copy_markdown": "复制 Markdown 内容",
