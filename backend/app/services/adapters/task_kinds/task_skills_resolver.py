@@ -141,6 +141,7 @@ def resolve_task_skills(db: Session, *, task_id: int, user_id: int) -> Dict[str,
     team = kindReader.get_by_name_and_namespace(
         db, task_owner_id, KindType.TEAM, team_namespace, team_name
     )
+    team_owner_id = _resolve_team_owner_id(task=task, task_crd=task_crd, team=team)
     if not team:
         logger.warning(
             "[get_task_skills] Team not found for task %s: namespace=%s, name=%s",
@@ -160,7 +161,7 @@ def resolve_task_skills(db: Session, *, task_id: int, user_id: int) -> Dict[str,
                 skill_name=skill_name,
                 namespace=requested_ref["namespace"],
                 is_public=requested_ref["is_public"],
-                user_id=task_owner_id,
+                user_id=team_owner_id,
                 team_namespace=team_namespace or "default",
             )
             if skill:
@@ -189,7 +190,7 @@ def resolve_task_skills(db: Session, *, task_id: int, user_id: int) -> Dict[str,
         if getattr(member, "botRef", None)
     }
     bot_by_ref = _batch_load_kinds_by_refs(
-        db, user_id=task_owner_id, kind_type=KindType.BOT, refs=bot_refs
+        db, user_id=team_owner_id, kind_type=KindType.BOT, refs=bot_refs
     )
 
     bot_crd_by_ref = {}
@@ -205,7 +206,7 @@ def resolve_task_skills(db: Session, *, task_id: int, user_id: int) -> Dict[str,
             )
 
     ghost_by_ref = _batch_load_kinds_by_refs(
-        db, user_id=task_owner_id, kind_type=KindType.GHOST, refs=ghost_refs
+        db, user_id=team_owner_id, kind_type=KindType.GHOST, refs=ghost_refs
     )
 
     for bot_crd in bot_crd_by_ref.values():
@@ -226,7 +227,7 @@ def resolve_task_skills(db: Session, *, task_id: int, user_id: int) -> Dict[str,
                         skill = find_skill_by_name(
                             db,
                             skill_name=skill_name,
-                            owner_user_id=task_owner_id,
+                            owner_user_id=team_owner_id,
                             team_namespace=team.namespace or "default",
                         )
                         if skill:
@@ -259,7 +260,7 @@ def resolve_task_skills(db: Session, *, task_id: int, user_id: int) -> Dict[str,
                 skill_name=skill_name,
                 namespace=requested_ref.namespace,
                 is_public=requested_ref.is_public,
-                user_id=task_owner_id,
+                user_id=team_owner_id,
                 team_namespace=team.namespace or "default",
             )
             if skill:
@@ -285,7 +286,7 @@ def resolve_task_skills(db: Session, *, task_id: int, user_id: int) -> Dict[str,
                 skill_name=skill_name,
                 namespace=requested_ref["namespace"],
                 is_public=requested_ref["is_public"],
-                user_id=task_owner_id,
+                user_id=team_owner_id,
                 team_namespace=team.namespace or "default",
             )
             if skill:
@@ -306,7 +307,7 @@ def resolve_task_skills(db: Session, *, task_id: int, user_id: int) -> Dict[str,
         resolved_user_refs = resolve_skill_refs_by_names(
             db,
             skill_names=user_selected_skills,
-            user_id=task_owner_id,
+            user_id=team_owner_id,
             namespace=team.namespace or "default",
         )
         skill_refs.update(resolved_user_refs)
@@ -336,6 +337,24 @@ def resolve_task_skills(db: Session, *, task_id: int, user_id: int) -> Dict[str,
         "skill_refs": skill_refs,
         "preload_skill_refs": preload_skill_refs,
     }
+
+
+def _resolve_team_owner_id(
+    *, task: TaskResource, task_crd: Task, team: Kind | None
+) -> int:
+    """Resolve the owner used for team-scoped resource lookups.
+
+    Shared teams execute under the task creator's context, but their related
+    Bots, Ghosts, and private Skills still belong to the original team owner.
+    """
+    if team and getattr(team, "user_id", None):
+        return team.user_id
+
+    team_ref_user_id = getattr(task_crd.spec.teamRef, "user_id", None)
+    if team_ref_user_id:
+        return team_ref_user_id
+
+    return task.user_id
 
 
 def _get_subscription_skill_refs_for_task(db: Session, *, task_id: int) -> List[Any]:

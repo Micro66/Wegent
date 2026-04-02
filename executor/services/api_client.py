@@ -187,13 +187,6 @@ def fetch_task_skills(task_id: str, auth_token: str) -> TaskSkillsInfo:
                 f"skill_refs_count={len(data.get('skill_refs', {}) or {})}, "
                 f"preload_skill_refs_count={len(data.get('preload_skill_refs', {}) or {})}"
             )
-            logger.info(
-                "[fetch_task_skills] Resolved refs for task %s: "
-                "skill_ref_keys=%s, preload_skill_ref_keys=%s",
-                task_id,
-                sorted((data.get("skill_refs", {}) or {}).keys()),
-                sorted((data.get("preload_skill_refs", {}) or {}).keys()),
-            )
             return TaskSkillsInfo(
                 task_id=data.get(
                     "task_id", int(task_id) if str(task_id).isdigit() else -1

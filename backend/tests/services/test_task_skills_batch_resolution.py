@@ -443,3 +443,69 @@ def test_resolve_task_skills_team_missing_still_uses_requested_skill_refs():
     assert result["preload_skills"] == ["manual-skill"]
     assert result["skill_refs"]["manual-skill"]["skill_id"] == 22
     assert result["preload_skill_refs"]["manual-skill"]["skill_id"] == 22
+
+
+@pytest.mark.unit
+def test_resolve_task_skills_uses_team_owner_for_shared_team_skill_resolution():
+    db = Mock(spec=Session)
+
+    mock_task = Mock(spec=TaskResource)
+    mock_task.id = 123
+    mock_task.user_id = 99
+    mock_task.kind = "Task"
+    mock_task.is_active = TaskResource.STATE_ACTIVE
+    mock_task.json = {"kind": "Task"}
+
+    mock_task_query = Mock()
+    mock_task_query.filter.return_value = mock_task_query
+    mock_task_query.first.return_value = mock_task
+    db.query.return_value = mock_task_query
+
+    task_crd = SimpleNamespace(
+        spec=SimpleNamespace(
+            teamRef=SimpleNamespace(name="shared-team", namespace="default", user_id=7),
+        ),
+        metadata=SimpleNamespace(
+            labels={
+                "requestedSkillRefs": json.dumps(
+                    [
+                        {
+                            "name": "owner-private-skill",
+                            "namespace": "default",
+                            "is_public": False,
+                        }
+                    ]
+                )
+            }
+        ),
+    )
+    team_crd = SimpleNamespace(spec=SimpleNamespace(members=[]))
+    shared_team = _build_kind(7, {"kind": "Team", "name": "shared-team"})
+
+    with (
+        patch(
+            "app.services.task_member_service.task_member_service.is_member",
+            return_value=True,
+        ),
+        patch(
+            "app.services.readers.kinds.kindReader.get_by_name_and_namespace",
+            return_value=shared_team,
+        ),
+        patch(
+            "app.services.adapters.task_kinds.task_skills_resolver.Task.model_validate",
+            return_value=task_crd,
+        ),
+        patch(
+            "app.services.adapters.task_kinds.task_skills_resolver.Team.model_validate",
+            return_value=team_crd,
+        ),
+        patch(
+            "app.services.adapters.task_kinds.task_skills_resolver.find_skill_by_ref",
+            return_value=SimpleNamespace(id=55, namespace="default", user_id=7),
+        ) as mock_find_skill_by_ref,
+    ):
+        result = resolve_task_skills(db, task_id=123, user_id=99)
+
+    assert result["skill_refs"]["owner-private-skill"]["skill_id"] == 55
+    assert result["preload_skill_refs"]["owner-private-skill"]["skill_id"] == 55
+    assert mock_find_skill_by_ref.call_args.kwargs["user_id"] == 7
