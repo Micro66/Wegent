@@ -5,6 +5,7 @@ import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { NotificationChannelBindingConfig } from '@/types/subscription'
+import type { TFunction } from 'i18next'
 
 interface ChannelBindingPanelProps {
   channelId: number
@@ -20,10 +21,7 @@ interface ChannelBindingPanelProps {
   onUnbind: () => void
 }
 
-const resolvePrivateStatusText = (
-  bound: boolean,
-  t: (key: string, fallback?: string) => string
-) => {
+const resolvePrivateStatusText = (bound: boolean, t: TFunction<string | string[]>) => {
   if (bound) {
     return `${t('notification_settings.bound_to_prefix', '已绑定至：')}${t(
       'notification_settings.bound_private_target',
@@ -38,7 +36,7 @@ const resolveGroupStatusText = (
   waiting: boolean,
   bound: boolean,
   groupName: string | undefined,
-  t: (key: string, fallback?: string) => string
+  t: TFunction<string | string[]>
 ) => {
   if (waiting) {
     return t('notification_settings.binding_pending', '等待绑定中...')
@@ -68,6 +66,12 @@ export function ChannelBindingPanel({
   const groupBound = Boolean(config.group_conversation_id)
   const privateStatusText = resolvePrivateStatusText(privateBound, t)
   const groupStatusText = resolveGroupStatusText(isWaiting, groupBound, config.group_name, t)
+  const privateTitle = config.bind_private
+    ? t('notification_settings.private_delivery_enabled', '已启用私聊')
+    : t('notification_settings.private_delivery_disabled', '未启用私聊')
+  const groupTitle = config.bind_group
+    ? t('notification_settings.group_delivery_enabled', '已启用群聊')
+    : t('notification_settings.group_delivery_disabled', '未启用群聊')
 
   return (
     <div
@@ -78,10 +82,19 @@ export function ChannelBindingPanel({
         <div className="rounded-lg border border-border bg-surface/40 p-4">
           <div className="flex items-start justify-between gap-4">
             <div className="space-y-2">
-              <Label htmlFor={`enable-private-${channelId}`} className="text-sm font-medium">
-                {t('notification_settings.enable_private_delivery', '启用私聊')}
+              <Label
+                htmlFor={`enable-private-${channelId}`}
+                className="text-base font-semibold text-text-primary"
+                data-testid={`private-delivery-title-${channelId}`}
+              >
+                {privateTitle}
               </Label>
-              <p className="text-sm font-medium text-text-primary">{privateStatusText}</p>
+              <p
+                className="text-sm font-medium text-text-primary"
+                data-testid={`private-delivery-status-${channelId}`}
+              >
+                {privateStatusText}
+              </p>
               <p className="text-xs text-text-muted">
                 {t(
                   'notification_settings.private_delivery_hint',
@@ -93,7 +106,7 @@ export function ChannelBindingPanel({
               id={`enable-private-${channelId}`}
               checked={config.bind_private}
               onCheckedChange={onPrivateChange}
-              aria-label={t('notification_settings.enable_private_delivery', '启用私聊')}
+              aria-label={privateTitle}
             />
           </div>
 
@@ -118,10 +131,19 @@ export function ChannelBindingPanel({
         <div className="rounded-lg border border-border bg-surface/40 p-4">
           <div className="flex items-start justify-between gap-4">
             <div className="space-y-2">
-              <Label htmlFor={`enable-group-${channelId}`} className="text-sm font-medium">
-                {t('notification_settings.enable_group_delivery', '启用群聊')}
+              <Label
+                htmlFor={`enable-group-${channelId}`}
+                className="text-base font-semibold text-text-primary"
+                data-testid={`group-delivery-title-${channelId}`}
+              >
+                {groupTitle}
               </Label>
-              <p className="text-sm font-medium text-text-primary">{groupStatusText}</p>
+              <p
+                className="text-sm font-medium text-text-primary"
+                data-testid={`group-delivery-status-${channelId}`}
+              >
+                {groupStatusText}
+              </p>
               <p className="text-xs text-text-muted">
                 {isWaiting
                   ? t(
@@ -138,7 +160,7 @@ export function ChannelBindingPanel({
               id={`enable-group-${channelId}`}
               checked={config.bind_group}
               onCheckedChange={onGroupChange}
-              aria-label={t('notification_settings.enable_group_delivery', '启用群聊')}
+              aria-label={groupTitle}
             />
           </div>
 

@@ -211,7 +211,7 @@ describe('TaskSidebar scroll structure', () => {
     const scrollContainer = screen.getAllByTestId('task-sidebar-scroll-container')[0]
     const settingsLink = screen
       .getAllByText('user-floating-menu')[0]
-      .closest('[data-tour="settings-link"]')
+      .closest('[data-tour="settings-link"]') as HTMLElement | null
 
     expect(settingsLink).toBeInTheDocument()
     expect(scrollContainer).not.toContainElement(settingsLink)
