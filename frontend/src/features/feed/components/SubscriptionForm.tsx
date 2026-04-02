@@ -345,6 +345,7 @@ export function SubscriptionForm({
       bind_private: boolean
       bind_group: boolean
       group_conversation_id?: string
+      group_name?: string
     }>
   >([])
   const [bindingWaitingState, setBindingWaitingState] = useState<Record<number, boolean>>({})
