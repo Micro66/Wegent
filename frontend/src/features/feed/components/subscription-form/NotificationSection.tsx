@@ -14,14 +14,6 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { fetchRuntimeConfig, DEFAULT_BIND_GROUP_STEPS } from '@/lib/runtime-config'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import {
@@ -33,6 +25,7 @@ import {
 } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { CollapsibleSection } from '@/components/common/CollapsibleSection'
+import { BindingProgressDialog } from './BindingProgressDialog'
 import type {
   NotificationChannelBindingConfig,
   NotificationLevel,
@@ -44,6 +37,7 @@ import type { NotificationSectionProps } from './types'
 interface GroupBindingCardProps {
   channelId: number
   channelName: string
+  bindGroupEnabled: boolean
   config: {
     channel_id: number
     bind_private: boolean
@@ -60,6 +54,7 @@ interface GroupBindingCardProps {
 
 function GroupBindingCard({
   channelName,
+  bindGroupEnabled,
   config,
   isWaiting,
   onStartBinding,
@@ -111,6 +106,14 @@ function GroupBindingCard({
             <p className="text-sm font-medium">
               {t('notification_settings.group_bound_title', '已绑定群聊')}
             </p>
+            {!bindGroupEnabled && (
+              <p className="text-xs text-text-muted">
+                {t(
+                  'notification_settings.group_bound_disabled_hint',
+                  '已绑定群聊，但当前未启用群消息发送'
+                )}
+              </p>
+            )}
             <div className="space-y-1">
               <div className="flex items-center gap-2 text-sm">
                 <MessageCircle className="h-4 w-4 text-text-muted" />
@@ -203,6 +206,10 @@ export function NotificationSection({
   const [privateBindingDialogChannel, setPrivateBindingDialogChannel] = useState<number | null>(
     null
   )
+  const [privateBindingState, setPrivateBindingState] = useState<'idle' | 'waiting' | 'success'>(
+    'idle'
+  )
+  const [boundPrivateName, setBoundPrivateName] = useState<string>('')
   const [groupBindingDialogChannel, setGroupBindingDialogChannel] = useState<number | null>(null)
   const [groupBindingState, setGroupBindingState] = useState<'idle' | 'waiting' | 'success'>('idle')
   const [boundGroupName, setBoundGroupName] = useState<string>('')
@@ -267,18 +274,42 @@ export function NotificationSection({
     [channelBindingConfigs]
   )
 
-  // Monitor binding success when dialog is open
+  const getChannelName = useCallback(
+    (channelId: number) => devAvailableChannels.find(item => item.id === channelId)?.name || '',
+    [devAvailableChannels]
+  )
+
+  useEffect(() => {
+    if (privateBindingDialogChannel && privateBindingState === 'waiting') {
+      if (getPrivateBound(privateBindingDialogChannel)) {
+        setBoundPrivateName(getChannelName(privateBindingDialogChannel))
+        setPrivateBindingState('success')
+        const timeoutId = window.setTimeout(() => {
+          setPrivateBindingDialogChannel(null)
+          setPrivateBindingState('idle')
+        }, 1500)
+
+        return () => {
+          window.clearTimeout(timeoutId)
+        }
+      }
+    }
+  }, [privateBindingDialogChannel, privateBindingState, getChannelName, devAvailableChannels])
+
   useEffect(() => {
     if (groupBindingDialogChannel && groupBindingState === 'waiting') {
       const config = getBindingConfig(groupBindingDialogChannel)
       if (config.group_conversation_id) {
         setBoundGroupName(config.group_name || '')
         setGroupBindingState('success')
-        // Auto close after 1.5 seconds
-        setTimeout(() => {
+        const timeoutId = window.setTimeout(() => {
           setGroupBindingDialogChannel(null)
           setGroupBindingState('idle')
         }, 1500)
+
+        return () => {
+          window.clearTimeout(timeoutId)
+        }
       }
     }
   }, [groupBindingDialogChannel, groupBindingState, channelBindingConfigs, getBindingConfig])
@@ -446,6 +477,8 @@ export function NotificationSection({
                               bind_private: nextChecked,
                             }))
                             if (nextChecked && !privateBound) {
+                              setPrivateBindingState('idle')
+                              setBoundPrivateName('')
                               setPrivateBindingDialogChannel(channel.id)
                             }
                           }}
@@ -473,7 +506,15 @@ export function NotificationSection({
                                 bind_group: nextChecked,
                               }))
                               if (nextChecked) {
-                                setGroupBindingDialogChannel(channel.id)
+                                if (config.group_conversation_id) {
+                                  setGroupBindingDialogChannel(null)
+                                  setGroupBindingState('idle')
+                                  setBoundGroupName(config.group_name || '')
+                                } else {
+                                  setGroupBindingState('idle')
+                                  setBoundGroupName('')
+                                  setGroupBindingDialogChannel(channel.id)
+                                }
                               } else {
                                 void onCancelBinding(channel.id)
                               }
@@ -485,11 +526,12 @@ export function NotificationSection({
                         </div>
 
                         {/* Group binding status card - shown when bind_group is checked */}
-                        {config.bind_group && (
+                        {(config.bind_group || Boolean(config.group_conversation_id)) && (
                           <div className="pl-6">
                             <GroupBindingCard
                               channelId={channel.id}
                               channelName={channel.name}
+                              bindGroupEnabled={config.bind_group}
                               config={config}
                               isWaiting={isWaiting}
                               onStartBinding={() => {
@@ -624,299 +666,107 @@ export function NotificationSection({
         <p className="text-xs text-text-muted">{t('notification_settings.webhook_hint')}</p>
       </div>
 
-      {/* Private binding dialog with step indicators */}
-      <Dialog
+      <BindingProgressDialog
         open={privateBindingDialogChannel !== null}
-        onOpenChange={open => {
-          if (!open && privateBindingDialogChannel) {
-            void onCancelBinding(privateBindingDialogChannel)
-            setPrivateBindingDialogChannel(null)
+        title={t('notification_settings.bind_private_title')}
+        description={t(
+          'notification_settings.bind_private_desc',
+          '请在钉钉私聊机器人发送任意消息，系统将自动完成绑定。'
+        )}
+        state={privateBindingState}
+        steps={[
+          { title: t('notification_settings.step_start', '开始绑定') },
+          {
+            title: t('notification_settings.step_send_message', '发送消息'),
+            hint: t(
+              'notification_settings.bind_private_desc',
+              '请在钉钉私聊机器人发送任意消息，系统将自动完成绑定。'
+            ),
+          },
+          { title: t('notification_settings.step_complete', '完成绑定') },
+        ]}
+        startLabel={t('notification_settings.step_start', '开始绑定')}
+        waitingTitle={t('notification_settings.waiting_binding', '正在等待绑定...')}
+        waitingHint={t(
+          'notification_settings.bind_private_desc',
+          '请在钉钉私聊机器人发送任意消息，系统将自动完成绑定。'
+        )}
+        successTitle={t('notification_settings.binding_success', '绑定成功')}
+        successHint={boundPrivateName}
+        cancelLabel={t('common:actions.cancel')}
+        startTestId="private-binding-start-button"
+        onStart={() => {
+          if (privateBindingDialogChannel) {
+            setPrivateBindingState('waiting')
+            const config = getBindingConfig(privateBindingDialogChannel)
+            void onStartBinding(privateBindingDialogChannel, true, config.bind_group)
           }
         }}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{t('notification_settings.bind_private_title')}</DialogTitle>
-            <DialogDescription>{t('notification_settings.bind_private_desc')}</DialogDescription>
-          </DialogHeader>
-
-          {/* Step indicators */}
-          <div className="py-4">
-            <div className="flex items-center justify-center gap-2">
-              <div className="flex items-center gap-2">
-                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-white text-sm font-medium">
-                  1
-                </div>
-                <span className="text-sm text-text-primary">
-                  {t('notification_settings.step_start', '开始绑定')}
-                </span>
-              </div>
-              <div className="w-8 h-px bg-border" />
-              <div className="flex items-center gap-2">
-                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-surface border border-border text-sm font-medium text-text-muted">
-                  2
-                </div>
-                <span className="text-sm text-text-muted">
-                  {t('notification_settings.step_send_message', '发送消息')}
-                </span>
-              </div>
-              <div className="w-8 h-px bg-border" />
-              <div className="flex items-center gap-2">
-                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-surface border border-border text-sm font-medium text-text-muted">
-                  3
-                </div>
-                <span className="text-sm text-text-muted">
-                  {t('notification_settings.step_complete', '完成绑定')}
-                </span>
-              </div>
-            </div>
-          </div>
-
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => {
-                if (privateBindingDialogChannel) {
-                  void onCancelBinding(privateBindingDialogChannel)
-                }
-                setPrivateBindingDialogChannel(null)
-              }}
-            >
-              {t('common:actions.cancel')}
-            </Button>
-            <Button
-              variant="primary"
-              onClick={() => {
-                if (privateBindingDialogChannel) {
-                  const config = getBindingConfig(privateBindingDialogChannel)
-                  void onStartBinding(
-                    privateBindingDialogChannel,
-                    config.bind_private,
-                    config.bind_group
-                  )
-                }
-                setPrivateBindingDialogChannel(null)
-              }}
-            >
-              {t('notification_settings.start_waiting')}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Group binding dialog with circular indicator */}
-      <Dialog
-        open={groupBindingDialogChannel !== null}
+        onCancel={() => {
+          if (privateBindingDialogChannel) {
+            void onCancelBinding(privateBindingDialogChannel)
+          }
+          setPrivateBindingDialogChannel(null)
+          setPrivateBindingState('idle')
+        }}
         onOpenChange={open => {
           if (!open) {
-            if (groupBindingDialogChannel) {
+            if (privateBindingState !== 'success' && privateBindingDialogChannel) {
+              void onCancelBinding(privateBindingDialogChannel)
+            }
+            setPrivateBindingDialogChannel(null)
+            setPrivateBindingState('idle')
+          }
+        }}
+      />
+
+      <BindingProgressDialog
+        open={groupBindingDialogChannel !== null}
+        title={t('notification_settings.bind_group_title')}
+        description={t(
+          'notification_settings.bind_group_desc',
+          '请将机器人加入目标群，在群里 @机器人 发送一条消息，系统会自动绑定并保持等待中状态。'
+        )}
+        state={groupBindingState}
+        steps={bindConfig.steps.slice(0, 3).map(step => ({
+          title: replaceVariables(step.title || '', bindConfig.variables || {}),
+          hint: step.hint ? replaceVariables(step.hint, bindConfig.variables || {}) : undefined,
+        }))}
+        startLabel={t('notification_settings.step_start', '开始绑定')}
+        waitingTitle={t('notification_settings.group_binding_waiting_title', '正在等待群聊消息...')}
+        waitingHint={t(
+          'notification_settings.group_binding_waiting_desc',
+          '请在群聊中 @机器人 发送任意消息'
+        )}
+        successTitle={t('notification_settings.binding_success', '绑定成功')}
+        successHint={boundGroupName}
+        cancelLabel={t('common:actions.cancel')}
+        startTestId="group-binding-start-button"
+        onStart={() => {
+          if (groupBindingDialogChannel) {
+            setGroupBindingState('waiting')
+            const config = getBindingConfig(groupBindingDialogChannel)
+            void onStartBinding(groupBindingDialogChannel, config.bind_private, config.bind_group)
+          }
+        }}
+        onCancel={() => {
+          if (groupBindingDialogChannel) {
+            void onCancelBinding(groupBindingDialogChannel)
+          }
+          setGroupBindingDialogChannel(null)
+          setGroupBindingState('idle')
+        }}
+        onOpenChange={open => {
+          if (!open) {
+            if (groupBindingState !== 'success' && groupBindingDialogChannel) {
               void onCancelBinding(groupBindingDialogChannel)
             }
             setGroupBindingDialogChannel(null)
             setGroupBindingState('idle')
           }
         }}
-      >
-        <DialogContent className="sm:max-w-[400px]">
-          <DialogHeader>
-            <DialogTitle>{t('notification_settings.bind_group_title')}</DialogTitle>
-          </DialogHeader>
-
-          {/* Circular binding indicator */}
-          <div className="flex flex-col items-center py-6">
-            {/* Step instructions - always visible */}
-            <div className="w-full px-4 mb-6">
-              <div className="space-y-3">
-                {/* Step 1: Add bot to group */}
-                <div className="flex items-start gap-3">
-                  <div
-                    className={`flex h-6 w-6 items-center justify-center rounded-full text-sm font-medium shrink-0 transition-colors ${
-                      groupBindingState === 'idle'
-                        ? 'bg-primary text-white'
-                        : 'bg-success/10 text-success'
-                    }`}
-                  >
-                    {groupBindingState === 'idle' ? '1' : '✓'}
-                  </div>
-                  <div className="flex-1">
-                    <p
-                      className={`text-sm transition-colors ${
-                        groupBindingState === 'idle'
-                          ? 'text-text-primary font-medium'
-                          : 'text-text-muted'
-                      }`}
-                    >
-                      {replaceVariables(
-                        bindConfig.steps[0]?.title || '',
-                        bindConfig.variables || {}
-                      )}
-                    </p>
-                    {bindConfig.steps[0]?.hint && (
-                      <p className="text-xs text-text-muted mt-0.5">
-                        {replaceVariables(bindConfig.steps[0].hint, bindConfig.variables || {})}
-                      </p>
-                    )}
-                  </div>
-                </div>
-
-                {/* Step 2: Click start */}
-                <div className="flex items-start gap-3">
-                  <div
-                    className={`flex h-6 w-6 items-center justify-center rounded-full text-sm font-medium shrink-0 transition-colors ${
-                      groupBindingState === 'waiting'
-                        ? 'bg-success/10 text-success'
-                        : 'bg-primary/10 text-primary'
-                    }`}
-                  >
-                    {groupBindingState === 'waiting' ? '✓' : '2'}
-                  </div>
-                  <div className="flex-1">
-                    <p
-                      className={`text-sm transition-colors ${
-                        groupBindingState === 'waiting' ? 'text-text-muted' : 'text-text-primary'
-                      }`}
-                    >
-                      {replaceVariables(
-                        bindConfig.steps[1]?.title || '',
-                        bindConfig.variables || {}
-                      )}
-                    </p>
-                    {bindConfig.steps[1]?.hint && (
-                      <p className="text-xs text-text-muted mt-0.5">
-                        {replaceVariables(bindConfig.steps[1].hint, bindConfig.variables || {})}
-                      </p>
-                    )}
-                  </div>
-                </div>
-
-                {/* Step 3: @ bot in group */}
-                <div className="flex items-start gap-3">
-                  <div
-                    className={`flex h-6 w-6 items-center justify-center rounded-full text-sm font-medium shrink-0 transition-colors ${
-                      groupBindingState === 'waiting'
-                        ? 'bg-primary text-white'
-                        : 'bg-primary/10 text-primary'
-                    }`}
-                  >
-                    3
-                  </div>
-                  <div className="flex-1">
-                    <p
-                      className={`text-sm transition-colors ${
-                        groupBindingState === 'waiting'
-                          ? 'text-text-primary font-medium'
-                          : 'text-text-muted'
-                      }`}
-                    >
-                      {replaceVariables(
-                        bindConfig.steps[2]?.title || '',
-                        bindConfig.variables || {}
-                      )}
-                    </p>
-                    {bindConfig.steps[2]?.hint && (
-                      <p className="text-xs text-text-muted mt-0.5">
-                        {replaceVariables(bindConfig.steps[2].hint, bindConfig.variables || {})}
-                      </p>
-                    )}
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Idle state - clickable circle */}
-            {groupBindingState === 'idle' && (
-              <>
-                <button
-                  onClick={() => {
-                    if (groupBindingDialogChannel) {
-                      setGroupBindingState('waiting')
-                      const config = getBindingConfig(groupBindingDialogChannel)
-                      void onStartBinding(
-                        groupBindingDialogChannel,
-                        config.bind_private,
-                        config.bind_group
-                      )
-                    }
-                  }}
-                  className="relative w-36 h-36 rounded-full border-3 border-primary bg-surface flex flex-col items-center justify-center cursor-pointer transition-all duration-300 hover:scale-105 hover:shadow-lg focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2"
-                  style={{ borderWidth: '3px' }}
-                >
-                  <span className="text-lg font-semibold text-primary">开始绑定</span>
-                </button>
-                <Button
-                  variant="outline"
-                  className="mt-6"
-                  onClick={() => {
-                    if (groupBindingDialogChannel) {
-                      void onCancelBinding(groupBindingDialogChannel)
-                    }
-                    setGroupBindingDialogChannel(null)
-                    setGroupBindingState('idle')
-                  }}
-                >
-                  {t('common:actions.cancel')}
-                </Button>
-              </>
-            )}
-
-            {/* Waiting state - spinning circle */}
-            {groupBindingState === 'waiting' && (
-              <>
-                <div className="relative w-36 h-36">
-                  {/* Spinning border */}
-                  <div
-                    className="absolute inset-0 rounded-full border-3 border-primary/20"
-                    style={{ borderWidth: '3px' }}
-                  />
-                  <div
-                    className="absolute inset-0 rounded-full border-3 border-transparent border-t-primary animate-spin"
-                    style={{ borderWidth: '3px' }}
-                  />
-                  {/* Inner content */}
-                  <div className="absolute inset-2 rounded-full bg-surface flex flex-col items-center justify-center">
-                    <span className="text-sm font-medium text-text-primary mb-1">
-                      等待绑定中...
-                    </span>
-                    <span className="text-xs text-text-muted text-center px-3 leading-relaxed">
-                      请在群聊中
-                      <br />
-                      @机器人发送消息
-                    </span>
-                  </div>
-                </div>
-                <Button
-                  variant="outline"
-                  className="mt-6"
-                  onClick={() => {
-                    if (groupBindingDialogChannel) {
-                      void onCancelBinding(groupBindingDialogChannel)
-                    }
-                    setGroupBindingState('idle')
-                  }}
-                >
-                  {t('common:actions.cancel')}
-                </Button>
-              </>
-            )}
-
-            {/* Success state - checkmark circle */}
-            {groupBindingState === 'success' && (
-              <div
-                className="relative w-36 h-36 rounded-full border-3 border-success bg-surface flex flex-col items-center justify-center"
-                style={{ borderWidth: '3px' }}
-              >
-                <CheckCircle className="h-10 w-10 text-success mb-1" />
-                <span className="text-lg font-semibold text-success">绑定成功!</span>
-                {boundGroupName && (
-                  <span className="text-xs text-text-muted text-center px-3 truncate max-w-[120px] mt-1">
-                    {boundGroupName}
-                  </span>
-                )}
-              </div>
-            )}
-          </div>
-        </DialogContent>
-      </Dialog>
+        contentClassName="sm:max-w-[400px]"
+      />
     </CollapsibleSection>
   )
 }
