@@ -788,7 +788,9 @@ class ChatNamespace(socketio.AsyncNamespace):
             if should_trigger_ai and assistant_subtask:
                 from sqlalchemy.orm import make_transient
 
-                from app.services.chat.trigger import trigger_ai_response_unified
+                from app.services.chat.trigger.failure import fail_task_before_dispatch
+                from app.services.chat.trigger.unified import build_execution_request
+                from app.services.execution import execution_dispatcher
 
                 logger.info(
                     f"[WS] chat:send triggering AI response with enable_deep_thinking={payload.enable_deep_thinking} (controls tool usage)"
@@ -816,24 +818,40 @@ class ChatNamespace(socketio.AsyncNamespace):
                     user_subtask_for_context.id if user_subtask_for_context else None
                 )
                 device_id = payload.device_id
+                try:
+                    execution_request = await build_execution_request(
+                        task=task,
+                        assistant_subtask=assistant_subtask,
+                        team=team,
+                        user=user,
+                        message=payload.message,
+                        device_id=device_id,
+                        payload=payload,
+                        user_subtask_id=user_subtask_id_for_context,
+                        previous_bot_id=previous_bot_id,
+                    )
+                except Exception as exc:
+                    await fail_task_before_dispatch(
+                        task_id=task.id,
+                        subtask_id=assistant_subtask.id,
+                        error_message=str(exc),
+                    )
+                    return {
+                        "error": str(exc),
+                        "task_id": task.id,
+                        "subtask_id": user_subtask.id if user_subtask else None,
+                        "message_id": (
+                            user_subtask.message_id if user_subtask else None
+                        ),
+                    }
 
                 # Create async task for AI response - don't await it
                 # This ensures the ACK is returned before chat:start is sent
                 async def _trigger_ai():
                     try:
-                        await trigger_ai_response_unified(
-                            task=task,
-                            assistant_subtask=assistant_subtask,
-                            team=team,
-                            user=user,
-                            message=payload.message,  # Original message
-                            payload=payload,
-                            task_room=task_room,
+                        await execution_dispatcher.dispatch(
+                            execution_request,
                             device_id=device_id,
-                            namespace=self,
-                            user_subtask_id=user_subtask_id_for_context,  # Pass user subtask ID for unified context processing
-                            auth_token=auth_token,  # Pass original JWT token from WebSocket session
-                            previous_bot_id=previous_bot_id,  # Pipeline mode: previous stage's bot_id for session management
                         )
                     except Exception as e:
                         logger.exception(

@@ -23,6 +23,7 @@ from app.models.kind import Kind
 from app.models.subtask import Subtask, SubtaskStatus
 from app.models.task import TaskResource
 from app.models.user import User
+from app.services.chat.trigger.failure import fail_task_before_dispatch
 from app.services.device_service import device_service
 from app.utils.prompt_utils import extract_display_prompt
 
@@ -130,20 +131,28 @@ async def route_task_to_device(
     # after deep-thinking persistence, the prompt may be a JSON content array.
     builder = TaskRequestBuilder(db)
     fallback_prompt = user_subtask.prompt if user_subtask else local_subtask.prompt
-    request = builder.build(
-        subtask=local_subtask,
-        task=task,
-        user=user,
-        team=team,
-        message=(
-            message
-            if message is not None
-            else extract_display_prompt(fallback_prompt) or ""
-        ),
-        override_model_name=override_model_name,
-        force_override=force_override,
-        attachments=attachments,
-    )
+    try:
+        request = builder.build(
+            subtask=local_subtask,
+            task=task,
+            user=user,
+            team=team,
+            message=(
+                message
+                if message is not None
+                else extract_display_prompt(fallback_prompt) or ""
+            ),
+            override_model_name=override_model_name,
+            force_override=force_override,
+            attachments=attachments,
+        )
+    except Exception as exc:
+        await fail_task_before_dispatch(
+            task_id=task.id,
+            subtask_id=local_subtask.id,
+            error_message=str(exc),
+        )
+        raise
 
     # Dispatch task via ExecutionDispatcher
     # When device_id is specified, ExecutionDispatcher uses WebSocket mode
@@ -220,15 +229,23 @@ async def route_task_to_device_unified(
 
     # Build unified execution request
     builder = TaskRequestBuilder(db)
-    request = builder.build(
-        subtask=subtask,
-        task=task,
-        user=user,
-        team=team,
-        message=message,
-        override_model_name=override_model_name,
-        force_override=force_override,
-    )
+    try:
+        request = builder.build(
+            subtask=subtask,
+            task=task,
+            user=user,
+            team=team,
+            message=message,
+            override_model_name=override_model_name,
+            force_override=force_override,
+        )
+    except Exception as exc:
+        await fail_task_before_dispatch(
+            task_id=task.id,
+            subtask_id=subtask.id,
+            error_message=str(exc),
+        )
+        raise
 
     # Dispatch task via ExecutionDispatcher with device_id
     await execution_dispatcher.dispatch(request, device_id=device_id)

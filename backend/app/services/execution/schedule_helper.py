@@ -17,6 +17,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
+from app.services.chat.trigger.failure import fail_task_before_dispatch
 from app.utils.prompt_utils import extract_display_prompt
 
 logger = logging.getLogger(__name__)
@@ -199,11 +200,13 @@ async def _dispatch_task_async(task_id: int) -> None:
                         logger.error(
                             f"[schedule_dispatch] Failed to recover executor for subtask {subtask.id}"
                         )
-                        subtask.status = SubtaskStatus.FAILED
-                        subtask.error_message = (
-                            "Failed to recover executor after Pod deletion"
+                        await fail_task_before_dispatch(
+                            task_id=task.id,
+                            subtask_id=subtask.id,
+                            error_message=(
+                                "Failed to recover executor after Pod deletion"
+                            ),
                         )
-                        db.commit()
                         continue
 
                 # Update subtask status to RUNNING
@@ -236,10 +239,11 @@ async def _dispatch_task_async(task_id: int) -> None:
                     f"[schedule_dispatch] Failed to dispatch subtask {subtask.id}: {e}",
                     exc_info=True,
                 )
-                # Mark subtask as FAILED
-                subtask.status = SubtaskStatus.FAILED
-                subtask.error_message = str(e)
-                db.commit()
+                await fail_task_before_dispatch(
+                    task_id=task.id,
+                    subtask_id=subtask.id,
+                    error_message=str(e),
+                )
 
     except Exception as e:
         logger.error(

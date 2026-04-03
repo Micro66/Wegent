@@ -33,6 +33,10 @@ from app.services.channels.callback import (
     ChannelType,
 )
 from app.services.channels.commands import (
+    AGENT_ITEM_TEMPLATE,
+    AGENTS_EMPTY,
+    AGENTS_FOOTER,
+    AGENTS_HEADER,
     DEVICE_ITEM_TEMPLATE,
     DEVICES_EMPTY,
     DEVICES_FOOTER,
@@ -64,6 +68,8 @@ logger = logging.getLogger(__name__)
 
 # Redis key prefix for conversation -> task_id mapping
 CHANNEL_CONV_TASK_PREFIX = "channel:conv_task:"
+# Redis key prefix for conversation -> team_id mapping
+CHANNEL_CONV_TEAM_PREFIX = "channel:conv_team:"
 # TTL for conversation-task mapping (7 days)
 CHANNEL_CONV_TASK_TTL = 7 * 24 * 60 * 60
 
@@ -343,6 +349,40 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         key = f"{CHANNEL_CONV_TASK_PREFIX}{self._channel_type.value}:{conversation_id}:{user_id}"
         await cache_manager.set(key, task_id, expire=CHANNEL_CONV_TASK_TTL)
 
+    async def _get_conversation_team_id(
+        self, conversation_id: str, user_id: int
+    ) -> Optional[int]:
+        """Get cached Team ID for a conversation and user from Redis."""
+        if not conversation_id:
+            return None
+
+        key = f"{CHANNEL_CONV_TEAM_PREFIX}{self._channel_type.value}:{conversation_id}:{user_id}"
+        cached_team_id = await cache_manager.get(key)
+        if cached_team_id is None:
+            return None
+
+        return int(cached_team_id)
+
+    async def _set_conversation_team_id(
+        self, conversation_id: str, user_id: int, team_id: int
+    ) -> bool:
+        """Cache Team ID for a conversation and user in Redis without TTL."""
+        if not conversation_id:
+            return False
+
+        key = f"{CHANNEL_CONV_TEAM_PREFIX}{self._channel_type.value}:{conversation_id}:{user_id}"
+        return await cache_manager.set(key, team_id, expire=None)
+
+    async def _delete_conversation_team_id(
+        self, conversation_id: str, user_id: int
+    ) -> bool:
+        """Delete cached Team ID for a conversation and user from Redis."""
+        if not conversation_id:
+            return False
+
+        key = f"{CHANNEL_CONV_TEAM_PREFIX}{self._channel_type.value}:{conversation_id}:{user_id}"
+        return await cache_manager.delete(key)
+
     async def _delete_conversation_task_id(
         self, conversation_id: str, user_id: int
     ) -> None:
@@ -588,6 +628,14 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             self.logger.exception(
                 f"[{self._channel_type.value}Handler] Error processing chat message: {e}"
             )
+            try:
+                await self.send_text_reply(
+                    message_context, f"❌ 消息发送失败: {str(e)}"
+                )
+            except Exception:
+                self.logger.exception(
+                    f"[{self._channel_type.value}Handler] Failed to send error reply"
+                )
             return False
 
     async def _handle_command(
@@ -622,6 +670,11 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
 
         elif command.command == CommandType.DEVICES:
             await self._handle_devices_command(
+                db, user, command.argument, message_context
+            )
+
+        elif command.command == CommandType.AGENTS:
+            await self._handle_agents_command(
                 db, user, command.argument, message_context
             )
 
@@ -802,6 +855,152 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             message += "\n💡 在本地运行 Executor 后设备会自动上线"
 
         await self.send_text_reply(message_context, message)
+
+    def _get_accessible_teams(self, db: Session, user_id: int) -> List[Dict[str, Any]]:
+        """Get all Teams accessible to the user for IM Team selection."""
+        from app.services.adapters.team_kinds import team_kinds_service
+
+        return team_kinds_service.get_user_teams(
+            db=db,
+            user_id=user_id,
+            skip=0,
+            limit=500,
+            scope="all",
+        )
+
+    async def _resolve_conversation_team(
+        self, db: Session, user_id: int, conversation_id: str
+    ) -> tuple[Optional[Kind], bool]:
+        """Resolve the active Team for this user and conversation.
+
+        Returns the Team plus a flag indicating whether the Team comes from the
+        channel default configuration.
+        """
+        selected_team_id = await self._get_conversation_team_id(
+            conversation_id, user_id
+        )
+        if selected_team_id is not None:
+            accessible_teams = self._get_accessible_teams(db, user_id)
+            accessible_team_ids = {team["id"] for team in accessible_teams}
+            if selected_team_id in accessible_team_ids:
+                team = kindReader.get_by_id(db, KindType.TEAM, selected_team_id)
+                if team:
+                    return team, False
+
+            await self._delete_conversation_team_id(conversation_id, user_id)
+            self.logger.info(
+                "[%sHandler] Cleared stale conversation Team: conversation_id=%s, user_id=%s, team_id=%s",
+                self._channel_type.value,
+                conversation_id,
+                user_id,
+                selected_team_id,
+            )
+
+        return self._get_default_team(db, user_id), True
+
+    async def _handle_agents_command(
+        self,
+        db: Session,
+        user: User,
+        argument: Optional[str],
+        message_context: MessageContext,
+    ) -> None:
+        """Handle /agents command - list or switch Team for the current conversation."""
+        if argument and argument.strip().lower() == "reset":
+            await self._delete_conversation_team_id(
+                message_context.conversation_id, user.id
+            )
+            await self._delete_conversation_task_id(
+                message_context.conversation_id, user.id
+            )
+            default_team = self._get_default_team(db, user.id)
+            default_name = default_team.name if default_team else "未配置"
+            await self.send_text_reply(
+                message_context,
+                f"✅ 已恢复为频道默认智能体 **{default_name}**\n\n"
+                "当前会话后续消息将使用频道默认智能体",
+            )
+            return
+
+        accessible_teams = self._get_accessible_teams(db, user.id)
+
+        if not accessible_teams:
+            await self.send_text_reply(message_context, AGENTS_HEADER + AGENTS_EMPTY)
+            return
+
+        effective_team, _ = await self._resolve_conversation_team(
+            db, user.id, message_context.conversation_id
+        )
+        effective_team_id = effective_team.id if effective_team else None
+        default_team_id = self.default_team_id
+
+        if not argument:
+            message = AGENTS_HEADER + "\n"
+            for idx, team in enumerate(accessible_teams, start=1):
+                markers: List[str] = []
+                if team["id"] == effective_team_id:
+                    markers.append("⭐ 当前")
+                if team["id"] == default_team_id:
+                    markers.append("[默认]")
+
+                status = ""
+                if markers:
+                    status = " - " + " ".join(markers)
+
+                message += AGENT_ITEM_TEMPLATE.format(
+                    index=idx,
+                    name=team["name"],
+                    status=status,
+                )
+
+            message += AGENTS_FOOTER
+            await self.send_text_reply(message_context, message)
+            return
+
+        argument = argument.strip()
+        matched_team = None
+
+        if argument.isdigit():
+            team_index = int(argument)
+            if 1 <= team_index <= len(accessible_teams):
+                matched_team = accessible_teams[team_index - 1]
+            else:
+                await self.send_text_reply(
+                    message_context,
+                    f"❌ 无效的智能体序号: {argument}\n\n"
+                    f"当前有 {len(accessible_teams)} 个可用智能体，请使用 `/agents` 查看列表",
+                )
+                return
+        else:
+            argument_lower = argument.lower()
+            for team in accessible_teams:
+                if team["name"].lower() == argument_lower:
+                    matched_team = team
+                    break
+
+        if not matched_team:
+            await self.send_text_reply(
+                message_context,
+                f"❌ 未找到智能体: {argument}\n\n使用 `/agents` 查看可用智能体列表",
+            )
+            return
+
+        await self._set_conversation_team_id(
+            message_context.conversation_id, user.id, matched_team["id"]
+        )
+        await self._delete_conversation_task_id(
+            message_context.conversation_id, user.id
+        )
+
+        scope_hint = (
+            "仅对你在当前会话中的后续消息生效"
+            if message_context.conversation_type == "group"
+            else "当前会话后续消息将使用该智能体"
+        )
+        await self.send_text_reply(
+            message_context,
+            f"✅ 已切换到智能体 **{matched_team['name']}**\n\n{scope_hint}",
+        )
 
     async def _handle_use_command(
         self,
@@ -1083,8 +1282,15 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             mode = "☁️ 云端执行模式"
             device_info = ""
 
-        team = self._get_default_team(db, user.id)
-        team_name = team.name if team else "未配置"
+        team, is_default_team = await self._resolve_conversation_team(
+            db, user.id, message_context.conversation_id
+        )
+        if team:
+            team_name = team.name
+            if is_default_team:
+                team_name = f"{team_name}（频道默认）"
+        else:
+            team_name = "未配置"
 
         # Get model selection
         # For device mode, show the actual model that will be used (may be default device model)
@@ -1356,7 +1562,11 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         # Use short-lived db session for database operations
         db = SessionLocal()
         try:
-            team = self._get_task_mode_team(db, user.id)
+            team, _ = await self._resolve_conversation_team(
+                db, user.id, message_context.conversation_id
+            )
+            if not team:
+                team = self._get_task_mode_team(db, user.id)
             if not team:
                 await self.send_text_reply(
                     message_context, "配置错误: 未配置默认智能体"
@@ -1385,7 +1595,11 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         # Use short-lived db session for database operations
         db = SessionLocal()
         try:
-            team = self._get_task_mode_team(db, user.id)
+            team, _ = await self._resolve_conversation_team(
+                db, user.id, message_context.conversation_id
+            )
+            if not team:
+                team = self._get_task_mode_team(db, user.id)
             if not team:
                 await self.send_text_reply(
                     message_context, "配置错误: 未配置默认智能体"
@@ -1624,7 +1838,9 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         # Prevent attribute expiration after commit so ORM objects remain usable
         db.expire_on_commit = False
         try:
-            team = self._get_default_team(db, user.id)
+            team, _ = await self._resolve_conversation_team(
+                db, user.id, conversation_id
+            )
             if not team:
                 return "配置错误: 未配置默认智能体"
 
@@ -1726,21 +1942,31 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         # following the same path as PC-uploaded image attachments.
         ai_message = (message or "") + IM_CHANNEL_CONTEXT_HINT
 
-        await trigger_ai_response_unified(
-            task=trigger_data["task"],
-            assistant_subtask=trigger_data["assistant_subtask"],
-            team=trigger_data["team"],
-            user=trigger_data["user"],
-            message=ai_message,
-            payload=self._build_chat_payload(params, override_model_name),
-            task_room=task_room,
-            namespace=None,
-            user_subtask_id=trigger_data["user_subtask_id"],
-            result_emitter=response_emitter,
-        )
-
-        # Wait for AI response (no db session held)
         try:
+
+            async def _on_request_built(request: Any) -> None:
+                await self._register_chat_callback_if_needed(
+                    task_id=task_id,
+                    message_context=message_context,
+                    request=request,
+                    streaming_emitter=streaming_emitter,
+                )
+
+            await trigger_ai_response_unified(
+                task=trigger_data["task"],
+                assistant_subtask=trigger_data["assistant_subtask"],
+                team=trigger_data["team"],
+                user=trigger_data["user"],
+                message=ai_message,
+                payload=self._build_chat_payload(params, override_model_name),
+                task_room=task_room,
+                namespace=None,
+                user_subtask_id=trigger_data["user_subtask_id"],
+                result_emitter=response_emitter,
+                on_request_built=_on_request_built,
+            )
+
+            # Wait for AI response (no db session held)
             response = await asyncio.wait_for(
                 sync_emitter.wait_for_response(),
                 timeout=120.0,
@@ -1762,6 +1988,38 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                 f"[{self._channel_type.value}Handler] Response timeout for task {task_id}"
             )
             return "Response timeout, please try again later"
+        except Exception as e:
+            self.logger.exception(
+                f"[{self._channel_type.value}Handler] Chat execution failed: {e}"
+            )
+            return f"❌ 消息发送失败: {str(e)}"
+
+    async def _register_chat_callback_if_needed(
+        self,
+        task_id: int,
+        message_context: MessageContext,
+        request: Any,
+        streaming_emitter: Optional[Any],
+    ) -> None:
+        """Persist async chat callback state for IM channels."""
+        callback_service = self.get_callback_service()
+        if not callback_service:
+            return
+
+        from app.services.execution import execution_dispatcher
+        from app.services.execution.router import CommunicationMode
+
+        target = execution_dispatcher.router.route(request)
+        if target.mode != CommunicationMode.HTTP_CALLBACK:
+            return
+
+        await callback_service.save_callback_info(
+            task_id=task_id,
+            callback_info=self.create_callback_info(message_context),
+        )
+
+        if streaming_emitter is not None:
+            callback_service.register_active_emitter(task_id, streaming_emitter)
 
     def _build_chat_payload(
         self, params: Any, override_model_name: Optional[str] = None

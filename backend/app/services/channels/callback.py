@@ -119,6 +119,13 @@ class BaseChannelCallbackService(ABC, Generic[T]):
         """Get the Redis key prefix for this channel type."""
         return f"{CHANNEL_TASK_CALLBACK_PREFIX}{self._channel_type.value}:"
 
+    def register_active_emitter(self, task_id: int, emitter: "ResultEmitter") -> None:
+        """Register a live emitter so async callbacks can finish the same response."""
+        self._active_emitters[task_id] = emitter
+        logger.debug(
+            f"[{self._channel_type.value}Callback] Registered active emitter for task {task_id}"
+        )
+
     async def _get_lock_for_task(self, task_id: int) -> asyncio.Lock:
         """Get or create a lock for a specific task."""
         async with self._locks_lock:

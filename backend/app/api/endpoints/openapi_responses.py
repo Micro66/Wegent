@@ -361,6 +361,7 @@ async def _create_non_streaming_response_unified(
 
     from app.db.session import SessionLocal
     from app.services.chat.storage import db_handler, session_manager
+    from app.services.chat.trigger.failure import fail_task_before_dispatch
     from app.services.chat.trigger.unified import build_execution_request
     from app.services.execution import execution_dispatcher
     from app.services.execution.emitters import SSEResultEmitter
@@ -404,6 +405,11 @@ async def _create_non_streaming_response_unified(
             knowledge_base_names=knowledge_base_names,
         )
     except Exception as e:
+        await fail_task_before_dispatch(
+            task_id=setup.task_id,
+            subtask_id=assistant_subtask_id,
+            error_message=str(e),
+        )
         logger.error(f"Failed to build execution request: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -639,6 +645,7 @@ async def _create_streaming_response_unified(
     """
     from app.db.session import SessionLocal
     from app.services.chat.storage import db_handler, session_manager
+    from app.services.chat.trigger.failure import fail_task_before_dispatch
     from app.services.chat.trigger.unified import build_execution_request
     from app.services.execution import execution_dispatcher
     from app.services.openapi.chat_session import setup_chat_session
@@ -684,6 +691,16 @@ async def _create_streaming_response_unified(
             enable_web_search=enable_chat_bot and settings.WEB_SEARCH_ENABLED,
             preload_skills=preload_skills,
             knowledge_base_names=knowledge_base_names,
+        )
+    except Exception as e:
+        await fail_task_before_dispatch(
+            task_id=setup.task_id,
+            subtask_id=assistant_subtask_id,
+            error_message=str(e),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to build execution request: {str(e)}",
         )
     finally:
         # Close the database session before streaming starts

@@ -65,6 +65,138 @@ class TestBuildExecutionRequestUserSubtaskId:
                     mock_builder.build.assert_called_once()
                     mock_process_contexts.assert_awaited_once()
 
+
+@pytest.mark.unit
+class TestTriggerAiResponseUnifiedFailures:
+    async def test_marks_task_failed_and_notifies_emitter_when_request_build_fails(
+        self,
+    ):
+        """Pre-dispatch build failures should fail the task and notify the caller."""
+        from app.services.chat.trigger import unified as trigger_unified
+
+        task = SimpleNamespace(id=11)
+        assistant_subtask = SimpleNamespace(id=22)
+        team = SimpleNamespace()
+        user = SimpleNamespace(id=7)
+        result_emitter = SimpleNamespace(emit_error=AsyncMock())
+
+        with (
+            patch.object(
+                trigger_unified,
+                "build_execution_request",
+                AsyncMock(
+                    side_effect=ValueError("Bot developer-bot has no model configured")
+                ),
+            ),
+            patch.object(
+                trigger_unified,
+                "fail_task_before_dispatch",
+                AsyncMock(),
+                create=True,
+            ) as mock_fail_task,
+        ):
+            with pytest.raises(ValueError, match="no model configured"):
+                await trigger_unified.trigger_ai_response_unified(
+                    task=task,
+                    assistant_subtask=assistant_subtask,
+                    team=team,
+                    user=user,
+                    message="hello",
+                    payload=None,
+                    task_room="task:11",
+                    result_emitter=result_emitter,
+                )
+
+        mock_fail_task.assert_awaited_once_with(
+            task_id=11,
+            subtask_id=22,
+            error_message="Bot developer-bot has no model configured",
+            result_emitter=result_emitter,
+            namespace=None,
+            task_room="task:11",
+        )
+
+    async def test_invokes_on_request_built_before_dispatch(self):
+        """Request-built hooks should run before dispatch starts."""
+        from app.services.chat.trigger import unified as trigger_unified
+
+        task = SimpleNamespace(id=11)
+        assistant_subtask = SimpleNamespace(id=22)
+        team = SimpleNamespace()
+        user = SimpleNamespace(id=7)
+        request = ExecutionRequest(task_id=11, subtask_id=22)
+        on_request_built = AsyncMock()
+
+        with (
+            patch.object(
+                trigger_unified,
+                "build_execution_request",
+                AsyncMock(return_value=request),
+            ),
+            patch(
+                "app.services.execution.execution_dispatcher.dispatch",
+                new=AsyncMock(),
+            ) as mock_dispatch,
+        ):
+            await trigger_unified.trigger_ai_response_unified(
+                task=task,
+                assistant_subtask=assistant_subtask,
+                team=team,
+                user=user,
+                message="hello",
+                payload=None,
+                task_room="task:11",
+                on_request_built=on_request_built,
+            )
+
+        on_request_built.assert_awaited_once_with(request)
+        mock_dispatch.assert_awaited_once()
+
+    async def test_marks_task_failed_when_on_request_built_fails(self):
+        """Failures in request-built hooks should still fail the task before dispatch."""
+        from app.services.chat.trigger import unified as trigger_unified
+
+        task = SimpleNamespace(id=11)
+        assistant_subtask = SimpleNamespace(id=22)
+        team = SimpleNamespace()
+        user = SimpleNamespace(id=7)
+        request = ExecutionRequest(task_id=11, subtask_id=22)
+        on_request_built = AsyncMock(side_effect=RuntimeError("redis unavailable"))
+
+        with (
+            patch.object(
+                trigger_unified,
+                "build_execution_request",
+                AsyncMock(return_value=request),
+            ),
+            patch.object(
+                trigger_unified,
+                "fail_task_before_dispatch",
+                AsyncMock(),
+                create=True,
+            ) as mock_fail_task,
+        ):
+            with pytest.raises(RuntimeError, match="redis unavailable"):
+                await trigger_unified.trigger_ai_response_unified(
+                    task=task,
+                    assistant_subtask=assistant_subtask,
+                    team=team,
+                    user=user,
+                    message="hello",
+                    payload=None,
+                    task_room="task:11",
+                    on_request_built=on_request_built,
+                )
+
+        mock_fail_task.assert_awaited_once_with(
+            task_id=11,
+            subtask_id=22,
+            error_message="redis unavailable",
+            result_emitter=None,
+            namespace=None,
+            task_room="task:11",
+        )
+
     async def test_device_execution_keeps_sandbox_path_in_context_processing(self):
         """Device-routed tasks should keep sandbox path placeholders for executor rewrite."""
         from app.services.chat.trigger import unified as trigger_unified

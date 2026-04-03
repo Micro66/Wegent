@@ -17,7 +17,7 @@ Key changes from the original trigger_ai_response:
 """
 
 import logging
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Optional, Union
 
 from fastapi import HTTPException
 
@@ -26,6 +26,7 @@ from app.models.kind import Kind
 from app.models.subtask import Subtask
 from app.models.task import TaskResource
 from app.models.user import User
+from app.services.chat.trigger.failure import fail_task_before_dispatch
 from app.services.context import context_service
 
 if TYPE_CHECKING:
@@ -94,6 +95,7 @@ async def trigger_ai_response_unified(
     enable_tools: bool = True,
     enable_deep_thinking: bool = True,
     previous_bot_id: Optional[int] = None,
+    on_request_built: Optional[Callable[["ExecutionRequest"], Awaitable[None]]] = None,
 ) -> None:
     """Trigger AI response using unified execution architecture.
 
@@ -135,21 +137,34 @@ async def trigger_ai_response_unified(
     from app.services.execution import execution_dispatcher
 
     # 1. Build unified execution request using shared function
-    request = await build_execution_request(
-        task=task,
-        assistant_subtask=assistant_subtask,
-        team=team,
-        user=user,
-        message=message,
-        device_id=device_id,
-        payload=payload,
-        user_subtask_id=user_subtask_id,
-        history_limit=history_limit,
-        is_subscription=is_subscription,
-        enable_tools=enable_tools,
-        enable_deep_thinking=enable_deep_thinking,
-        previous_bot_id=previous_bot_id,
-    )
+    try:
+        request = await build_execution_request(
+            task=task,
+            assistant_subtask=assistant_subtask,
+            team=team,
+            user=user,
+            message=message,
+            device_id=device_id,
+            payload=payload,
+            user_subtask_id=user_subtask_id,
+            history_limit=history_limit,
+            is_subscription=is_subscription,
+            enable_tools=enable_tools,
+            enable_deep_thinking=enable_deep_thinking,
+            previous_bot_id=previous_bot_id,
+        )
+        if on_request_built is not None:
+            await on_request_built(request)
+    except Exception as exc:
+        await fail_task_before_dispatch(
+            task_id=task.id,
+            subtask_id=assistant_subtask.id,
+            error_message=str(exc),
+            result_emitter=result_emitter,
+            namespace=namespace,
+            task_room=task_room,
+        )
+        raise
 
     # 2. Dispatch task
     # ExecutionDispatcher automatically selects communication mode:

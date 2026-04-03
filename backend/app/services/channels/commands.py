@@ -11,6 +11,9 @@ These commands are channel-agnostic and work across all IM integrations.
 Supported commands:
 - /devices - List online devices
 - /devices <index|name> - Switch to specified device (auto enters device mode)
+- /agents - List available agents
+- /agents <index|name> - Switch to specified agent for current conversation
+- /agents reset - Reset the current conversation agent to the channel default
 - /models - List available models
 - /models <index|name> - Switch to specified model
 - /use - Show current execution mode
@@ -33,6 +36,7 @@ class CommandType(str, Enum):
     """Channel command types."""
 
     DEVICES = "devices"  # List devices
+    AGENTS = "agents"  # List/switch agents
     USE = "use"  # Switch device
     MODELS = "models"  # List/switch models
     STATUS = "status"  # Show status
@@ -79,6 +83,8 @@ def parse_command(content: str) -> Optional[ParsedCommand]:
     cmd_map = {
         "/devices": CommandType.DEVICES,
         "/device": CommandType.DEVICES,  # Alias for convenience
+        "/agents": CommandType.AGENTS,
+        "/agent": CommandType.AGENTS,  # Alias for convenience
         "/use": CommandType.USE,
         "/models": CommandType.MODELS,
         "/model": CommandType.MODELS,  # Alias for convenience
@@ -110,6 +116,11 @@ def is_command(content: str) -> bool:
 # Help message template
 HELP_MESSAGE = """📋 **可用命令**
 
+**智能体管理**
+• `/agents` - 查看可用智能体列表
+• `/agents <序号|智能体名>` - 切换当前会话智能体
+• `/agents reset` - 恢复为频道默认智能体
+
 **设备管理**
 • `/devices` - 查看在线设备列表
 • `/devices <序号|设备名>` - 切换到指定设备
@@ -140,9 +151,9 @@ STATUS_TEMPLATE = """📊 **当前状态**
 
 **执行模式**: {mode}
 {device_info}**当前模型**: {model_name}
-**默认智能体**: {team_name}
+**当前会话智能体**: {team_name}
 
-💡 使用 `/use` 切换执行模式，`/models` 切换模型，`/devices` 切换设备"""
+💡 使用 `/agents` 切换智能体，`/use` 切换执行模式，`/models` 切换模型，`/devices` 切换设备"""
 
 
 # Models list message templates
@@ -150,6 +161,16 @@ MODELS_HEADER = "🤖 **可用模型列表**\n"
 MODELS_EMPTY = "暂无可用模型\n\n💡 请联系管理员配置模型"
 MODEL_ITEM_TEMPLATE = "{index}. **{name}** ({provider}){status}\n"
 MODELS_FOOTER = "\n💡 使用 `/models <序号>` 或 `/models <模型名>` 切换到指定模型"
+
+
+# Agents list message templates
+AGENTS_HEADER = "🤖 **可用智能体列表**\n"
+AGENTS_EMPTY = "暂无可用智能体\n\n💡 请先在 Wegent 中创建或共享智能体"
+AGENT_ITEM_TEMPLATE = "{index}. **{name}**{status}\n"
+AGENTS_FOOTER = (
+    "\n💡 使用 `/agents <序号>` 或 `/agents <智能体名>` 切换当前会话智能体"
+    "\n💡 使用 `/agents reset` 恢复为频道默认智能体"
+)
 
 
 # Devices list message templates
@@ -165,6 +186,9 @@ IM_CHANNEL_CONTEXT_HINT = """
 
 ---
 [系统提示] 当前为 IM 频道对话模式，用户可以使用以下斜杠命令（直接输入命令即可，无需 AI 执行）：
+- `/agents` - 查看可用智能体列表
+- `/agents <序号|智能体名>` - 切换当前会话智能体
+- `/agents reset` - 恢复为频道默认智能体
 - `/devices` - 查看在线设备列表
 - `/devices <序号|设备名>` - 切换到指定设备进入设备模式
 - `/models` - 查看可用模型列表
@@ -176,4 +200,4 @@ IM_CHANNEL_CONTEXT_HINT = """
 - `/new` - 开始新对话
 - `/help` - 显示完整帮助
 
-如果用户询问如何切换模型、使用设备、执行模式等问题，请引导用户使用上述命令。"""
+如果用户询问如何切换智能体、切换模型、使用设备、执行模式等问题，请引导用户使用上述命令。"""

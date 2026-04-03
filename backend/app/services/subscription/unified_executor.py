@@ -94,6 +94,7 @@ async def execute_subscription_unified(
         user: User object
         execution_data: Subscription execution data
     """
+    from app.services.chat.trigger.failure import fail_task_before_dispatch
     from app.services.chat.trigger.unified import build_execution_request
     from app.services.execution import CommunicationMode, ExecutionRouter
     from shared.telemetry.context import get_request_id, set_request_context
@@ -114,26 +115,34 @@ async def execute_subscription_unified(
     )
 
     # Build execution request with preload_skills from subscription
-    request = await build_execution_request(
-        task=task,
-        assistant_subtask=assistant_subtask,
-        team=team,
-        user=user,
-        message=execution_data.prompt,
-        payload=None,
-        user_subtask_id=execution_data.user_subtask_id,
-        history_limit=(
-            execution_data.history_message_count
-            if execution_data.preserve_history
-            else None
-        ),
-        is_subscription=True,
-        enable_tools=True,
-        enable_deep_thinking=True,
-        preload_skills=(
-            execution_data.preload_skills if execution_data.preload_skills else None
-        ),
-    )
+    try:
+        request = await build_execution_request(
+            task=task,
+            assistant_subtask=assistant_subtask,
+            team=team,
+            user=user,
+            message=execution_data.prompt,
+            payload=None,
+            user_subtask_id=execution_data.user_subtask_id,
+            history_limit=(
+                execution_data.history_message_count
+                if execution_data.preserve_history
+                else None
+            ),
+            is_subscription=True,
+            enable_tools=True,
+            enable_deep_thinking=True,
+            preload_skills=(
+                execution_data.preload_skills if execution_data.preload_skills else None
+            ),
+        )
+    except Exception as exc:
+        await fail_task_before_dispatch(
+            task_id=task.id,
+            subtask_id=assistant_subtask.id,
+            error_message=str(exc),
+        )
+        raise
 
     # Determine communication mode
     router = ExecutionRouter()

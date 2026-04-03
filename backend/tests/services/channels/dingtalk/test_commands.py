@@ -84,6 +84,32 @@ class TestParseCommand:
         assert result.command == CommandType.HELP
         assert result.argument is None
 
+    def test_parse_agents_command(self):
+        """Test parsing /agents command."""
+        result = parse_command("/agents")
+        assert result is not None
+        assert result.command == CommandType.AGENTS
+        assert result.argument is None
+
+    def test_parse_agents_command_with_argument(self):
+        """Test parsing /agents command with team argument."""
+        result = parse_command("/agents 2")
+        assert result is not None
+        assert result.command == CommandType.AGENTS
+        assert result.argument == "2"
+
+        result = parse_command("/agents reset")
+        assert result is not None
+        assert result.command == CommandType.AGENTS
+        assert result.argument == "reset"
+
+    def test_parse_agent_alias_command(self):
+        """Test parsing /agent alias command."""
+        result = parse_command("/agent coding-assistant")
+        assert result is not None
+        assert result.command == CommandType.AGENTS
+        assert result.argument == "coding-assistant"
+
     def test_parse_command_case_insensitive(self):
         """Test that command parsing is case insensitive."""
         result = parse_command("/DEVICES")
@@ -141,6 +167,7 @@ class TestIsCommand:
         """Test is_command returns True for valid commands."""
         assert is_command("/devices") is True
         assert is_command("/use my-mac") is True
+        assert is_command("/agents") is True
         assert is_command("/status") is True
         assert is_command("/new") is True
         assert is_command("/help") is True
@@ -175,6 +202,7 @@ class TestHelpMessage:
     def test_help_message_contains_commands(self):
         """Test that help message contains all commands."""
         assert "/devices" in HELP_MESSAGE
+        assert "/agents" in HELP_MESSAGE
         assert "/use" in HELP_MESSAGE
         assert "/status" in HELP_MESSAGE
         assert "/new" in HELP_MESSAGE

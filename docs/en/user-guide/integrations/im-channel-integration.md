@@ -154,6 +154,42 @@ User: /new
 Bot: Started a new conversation. How can I help you?
 ```
 
+`/new` only resets the current conversation context. It does not clear the Team selected for the current conversation.
+
+### Switching Agents
+
+IM channels support switching the Team for the current conversation:
+
+```text
+/agents
+/agents 2
+/agents Code Assistant
+/agents reset
+```
+
+Command behavior:
+
+- `/agents`: list the Teams available to the current user
+- `/agents <index|team name>`: switch the Team for the current conversation
+- `/agents reset`: restore the channel default Team
+
+The list shows two markers:
+
+- `⭐ Current`: the Team currently active for this conversation
+- `[Default]`: the Team configured as the IM channel default
+
+### Agent Switching In Group Chats
+
+In group chats, Team switching is scoped to `user + conversation`, not to the whole group.
+
+This means:
+
+- when you run `/agents 2` in a group chat, it only affects your own later messages in that group conversation
+- it does not change the Team used by other group members
+- bot replies are still posted publicly in the group
+
+This avoids one user's Team switch unexpectedly changing the bot behavior for everyone else.
+
 ### AI Card Streaming
 
 When AI Card streaming is enabled, you'll see responses appear in real-time:

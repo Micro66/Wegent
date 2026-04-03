@@ -85,6 +85,25 @@ class DatabaseHandler:
             executor_namespace,
         )
 
+    def update_subtask_status_sync(
+        self,
+        subtask_id: int,
+        status: str,
+        result: dict[str, Any] | None = None,
+        error: str | None = None,
+        executor_name: str | None = None,
+        executor_namespace: str | None = None,
+    ) -> None:
+        """Update subtask status synchronously in the current thread."""
+        self._update_subtask_sync(
+            subtask_id,
+            status,
+            result,
+            error,
+            executor_name,
+            executor_namespace,
+        )
+
     def _update_subtask_sync(
         self,
         subtask_id: int,

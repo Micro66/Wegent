@@ -20,6 +20,7 @@ from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.kind import Task, Team
 from app.services.adapters.task_kinds import task_kinds_service
+from app.services.chat.trigger.failure import fail_task_before_dispatch_sync
 from app.services.readers.kinds import KindType, kindReader
 
 logger = logging.getLogger(__name__)
@@ -338,6 +339,12 @@ def setup_chat_session(
             preload_skills=preload_skills,
         )
     except ValueError as e:
+        fail_task_before_dispatch_sync(
+            task_id=task_id,
+            subtask_id=assistant_subtask.id,
+            error_message=str(e),
+            db=db,
+        )
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
     # Extract config from ExecutionRequest
