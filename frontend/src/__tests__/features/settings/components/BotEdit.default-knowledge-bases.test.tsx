@@ -335,11 +335,15 @@ describe('BotEdit default knowledge bases', () => {
     expect(screen.getByText('Product Docs')).toBeInTheDocument()
   })
 
-  test('renders fixed selected and available sections with grouped metadata', async () => {
+  test('renders popover-based selector with grouped metadata', async () => {
     renderBotEdit()
 
-    expect(await screen.findByTestId('default-knowledge-base-selected-section')).toBeInTheDocument()
-    expect(screen.getByTestId('default-knowledge-base-available-section')).toBeInTheDocument()
+    fireEvent.click(await screen.findByTestId('default-knowledge-base-trigger'))
+
+    expect(screen.queryByTestId('default-knowledge-base-selected-section')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('default-knowledge-base-available-section')).not.toBeInTheDocument()
+    expect(screen.getByTestId('default-knowledge-base-popover')).toBeInTheDocument()
+    expect(screen.getByTestId('default-knowledge-base-search-input')).toBeInTheDocument()
 
     expect(screen.getByTestId('default-knowledge-base-group-personal')).toBeInTheDocument()
     expect(screen.getByTestId('default-knowledge-base-group-group')).toBeInTheDocument()
@@ -360,6 +364,8 @@ describe('BotEdit default knowledge bases', () => {
   test('allows adding and removing multiple knowledge bases', async () => {
     renderBotEdit()
 
+    fireEvent.click(await screen.findByTestId('default-knowledge-base-trigger'))
+
     const searchInput = await screen.findByTestId('default-knowledge-base-search-input')
     fireEvent.change(searchInput, { target: { value: 'Runbooks' } })
 
@@ -378,6 +384,8 @@ describe('BotEdit default knowledge bases', () => {
 
   test('includes default_knowledge_base_refs in save payload', async () => {
     renderBotEdit()
+
+    fireEvent.click(await screen.findByTestId('default-knowledge-base-trigger'))
 
     const searchInput = await screen.findByTestId('default-knowledge-base-search-input')
     fireEvent.change(searchInput, { target: { value: 'Runbooks' } })

@@ -2,16 +2,18 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { useMemo, useState } from 'react'
+'use client'
+
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Building2, Clock3, Database, Loader2, Plus, User, Users, XIcon } from 'lucide-react'
 import type { TFunction } from 'i18next'
 
 import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { cn } from '@/lib/utils'
-import { formatDocumentCount } from '@/lib/i18n-helpers'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { useTranslation } from '@/hooks/useTranslation'
+import { formatDocumentCount } from '@/lib/i18n-helpers'
+import { cn } from '@/lib/utils'
 import type { KnowledgeBaseDefaultRef } from '@/types/api'
 import {
   KnowledgeBaseOption,
@@ -25,8 +27,12 @@ interface KnowledgeBaseMultiSelectorProps {
   disabled?: boolean
 }
 
-const SELECTED_SECTION_HEIGHT = 'h-[180px]'
-const AVAILABLE_SECTION_HEIGHT = 'h-[320px]'
+interface GroupedKnowledgeBaseOption {
+  option: KnowledgeBaseOption
+  group: KnowledgeBaseOptionSource
+  headerKey: string
+  headerLabel: string
+}
 
 function formatUpdatedAt(value: string): string {
   if (!value) {
@@ -106,23 +112,70 @@ function buildFallbackOption(item: KnowledgeBaseDefaultRef): KnowledgeBaseOption
   }
 }
 
-interface KnowledgeBaseCardProps {
+function groupAvailableKnowledgeBases(
+  availableItems: KnowledgeBaseOption[],
+  t: TFunction
+): GroupedKnowledgeBaseOption[] {
+  const grouped: GroupedKnowledgeBaseOption[] = []
+  const groupItemsByName = new Map<string, KnowledgeBaseOption[]>()
+
+  for (const item of availableItems) {
+    if (item.source !== 'group') {
+      continue
+    }
+
+    const groupName = item.groupName || item.namespace
+    if (!groupItemsByName.has(groupName)) {
+      groupItemsByName.set(groupName, [])
+    }
+    groupItemsByName.get(groupName)?.push(item)
+  }
+
+  grouped.push(
+    ...availableItems
+      .filter(item => item.source === 'personal')
+      .map(item => ({
+        option: item,
+        group: 'personal' as const,
+        headerKey: 'personal',
+        headerLabel: getGroupTitle('personal', t),
+      }))
+  )
+
+  for (const groupName of Array.from(groupItemsByName.keys()).sort()) {
+    const items = groupItemsByName.get(groupName) ?? []
+    grouped.push(
+      ...items.map(item => ({
+        option: item,
+        group: 'group' as const,
+        headerKey: `group-${groupName}`,
+        headerLabel: `${getGroupTitle('group', t)} - ${groupName}`,
+      }))
+    )
+  }
+
+  grouped.push(
+    ...availableItems
+      .filter(item => item.source === 'organization')
+      .map(item => ({
+        option: item,
+        group: 'organization' as const,
+        headerKey: 'organization',
+        headerLabel: getGroupTitle('organization', t),
+      }))
+  )
+
+  return grouped
+}
+
+interface KnowledgeBaseOptionRowProps {
   item: KnowledgeBaseOption
-  selected: boolean
   disabled: boolean
-  onAdd: (item: KnowledgeBaseOption) => void
-  onRemove: (knowledgeBaseId: number) => void
+  onSelect: (item: KnowledgeBaseOption) => void
   t: TFunction
 }
 
-function KnowledgeBaseCard({
-  item,
-  selected,
-  disabled,
-  onAdd,
-  onRemove,
-  t,
-}: KnowledgeBaseCardProps) {
+function KnowledgeBaseOptionRow({ item, disabled, onSelect, t }: KnowledgeBaseOptionRowProps) {
   const SourceIcon = getSourceIcon(item.source)
   const updatedAt = formatUpdatedAt(item.updatedAt)
   const documentText = formatDocumentCount(item.documentCount || 0, t)
@@ -130,87 +183,93 @@ function KnowledgeBaseCard({
   return (
     <div
       className={cn(
-        'rounded-lg border border-border bg-base p-3 transition-colors',
-        selected ? 'border-primary/30 bg-primary/5' : 'hover:bg-surface/60'
+        'cursor-pointer border-b border-border px-4 py-3 transition-colors last:border-b-0',
+        disabled ? 'cursor-not-allowed opacity-70' : 'hover:bg-muted'
       )}
-      data-testid={selected ? `default-knowledge-base-chip-${item.id}` : undefined}
+      onClick={() => {
+        if (!disabled) {
+          onSelect(item)
+        }
+      }}
+      role="button"
+      tabIndex={0}
+      onKeyDown={event => {
+        if (disabled) {
+          return
+        }
+
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault()
+          onSelect(item)
+        }
+      }}
+      data-testid={`default-knowledge-base-option-${item.id}`}
     >
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0 flex-1">
-          <div className="flex items-start gap-2">
-            <div className="mt-0.5 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
-              <Database className="h-4 w-4" />
-            </div>
-
-            <div className="min-w-0 flex-1 space-y-2">
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="truncate text-sm font-medium text-text-primary">{item.name}</span>
-                <Badge variant="info" size="sm" className="gap-1">
-                  <SourceIcon className="h-3 w-3" />
-                  {getSourceLabel(item.source, t)}
-                </Badge>
-                {item.source === 'group' && item.groupName ? (
-                  <Badge variant="secondary" size="sm">
-                    {item.groupName}
-                  </Badge>
-                ) : null}
-                {item.isShared ? (
-                  <Badge variant="secondary" size="sm">
-                    {t('common:bot.default_knowledge_bases_source_shared', '共享')}
-                  </Badge>
-                ) : null}
-                <Badge variant="secondary" size="sm">
-                  {documentText}
-                </Badge>
-                {selected ? (
-                  <Badge variant="info" size="sm">
-                    {t('common:bot.default_knowledge_bases_selected_badge', '已选')}
-                  </Badge>
-                ) : null}
-              </div>
-
-              {item.description ? (
-                <p className="line-clamp-1 text-xs text-text-secondary">{item.description}</p>
-              ) : null}
-
-              {updatedAt ? (
-                <div className="flex items-center gap-1 text-xs text-text-muted">
-                  <Clock3 className="h-3 w-3" />
-                  <span>
-                    {`${t('common:bot.default_knowledge_bases_updated_at', '最近更新')} ${updatedAt}`}
-                  </span>
-                </div>
-              ) : null}
-            </div>
-          </div>
+      <div className="flex min-w-0 flex-col gap-1">
+        <div className="flex flex-wrap items-center gap-2">
+          <Database className="h-4 w-4 flex-shrink-0 text-primary" />
+          <span className="text-sm font-medium text-text-primary">{item.name}</span>
+          <Badge variant="info" size="sm" className="gap-1">
+            <SourceIcon className="h-3 w-3" />
+            {getSourceLabel(item.source, t)}
+          </Badge>
+          {item.source === 'group' && item.groupName ? (
+            <Badge variant="secondary" size="sm">
+              {item.groupName}
+            </Badge>
+          ) : null}
+          {item.isShared ? (
+            <Badge variant="secondary" size="sm">
+              {t('common:bot.default_knowledge_bases_source_shared', '共享')}
+            </Badge>
+          ) : null}
+          <Badge variant="secondary" size="sm">
+            {documentText}
+          </Badge>
         </div>
 
-        {selected ? (
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            disabled={disabled}
-            className="h-8 px-2 text-text-muted hover:text-text-primary"
-            onClick={() => onRemove(item.id)}
-            data-testid={`default-knowledge-base-remove-${item.id}`}
-          >
-            <XIcon className="h-4 w-4" />
-          </Button>
-        ) : (
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            disabled={disabled}
-            className="h-8 px-2"
-            onClick={() => onAdd(item)}
-            data-testid={`default-knowledge-base-option-${item.id}`}
-          >
-            <Plus className="h-4 w-4" />
-          </Button>
-        )}
+        {item.description ? (
+          <div className="pl-6 text-xs text-text-secondary line-clamp-2">{item.description}</div>
+        ) : null}
+
+        {updatedAt ? (
+          <div className="flex items-center gap-1 pl-6 text-xs text-text-muted">
+            <Clock3 className="h-3 w-3" />
+            <span>
+              {`${t('common:bot.default_knowledge_bases_updated_at', '最近更新')} ${updatedAt}`}
+            </span>
+          </div>
+        ) : null}
       </div>
+    </div>
+  )
+}
+
+interface SelectedKnowledgeBaseChipProps {
+  item: KnowledgeBaseOption
+  disabled: boolean
+  onRemove: (knowledgeBaseId: number) => void
+}
+
+function SelectedKnowledgeBaseChip({ item, disabled, onRemove }: SelectedKnowledgeBaseChipProps) {
+  return (
+    <div
+      className="inline-flex items-center gap-1 rounded-md bg-muted px-2 py-1 text-sm"
+      data-testid={`default-knowledge-base-chip-${item.id}`}
+    >
+      <span>{item.name}</span>
+      <button
+        type="button"
+        onClick={() => onRemove(item.id)}
+        disabled={disabled}
+        className={cn(
+          'text-text-muted hover:text-text-primary',
+          disabled ? 'cursor-not-allowed opacity-50' : ''
+        )}
+        data-testid={`default-knowledge-base-remove-${item.id}`}
+      >
+        <XIcon className="h-3 w-3" />
+      </button>
     </div>
   )
 }
@@ -222,35 +281,38 @@ export function KnowledgeBaseMultiSelector({
 }: KnowledgeBaseMultiSelectorProps) {
   const { t } = useTranslation()
   const { options, loading, error } = useKnowledgeBaseOptions()
+  const [open, setOpen] = useState(false)
   const [search, setSearch] = useState('')
+  const [triggerWidth, setTriggerWidth] = useState<number>(0)
+  const listRef = useRef<HTMLDivElement>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+
+  useEffect(() => {
+    if (open && triggerRef.current) {
+      setTriggerWidth(triggerRef.current.offsetWidth)
+    }
+  }, [open])
 
   const selectedIds = useMemo(() => new Set(value.map(item => item.id)), [value])
   const optionsById = useMemo(() => new Map(options.map(option => [option.id, option])), [options])
 
   const selectedItems = useMemo(
-    () =>
-      value
-        .map(item => optionsById.get(item.id) ?? buildFallbackOption(item))
-        .filter(item => matchesSearch(item, search)),
-    [optionsById, search, value]
-  )
-
-  const availableItems = useMemo(
-    () => options.filter(option => !selectedIds.has(option.id) && matchesSearch(option, search)),
-    [options, search, selectedIds]
+    () => value.map(item => optionsById.get(item.id) ?? buildFallbackOption(item)),
+    [optionsById, value]
   )
 
   const groupedAvailableItems = useMemo(
-    () => ({
-      personal: availableItems.filter(item => item.source === 'personal'),
-      group: availableItems.filter(item => item.source === 'group'),
-      organization: availableItems.filter(item => item.source === 'organization'),
-    }),
-    [availableItems]
+    () =>
+      groupAvailableKnowledgeBases(
+        options.filter(option => !selectedIds.has(option.id) && matchesSearch(option, search)),
+        t
+      ),
+    [options, search, selectedIds, t]
   )
 
   const handleSelect = (option: KnowledgeBaseOption) => {
     onChange([...value, { id: option.id, name: option.name }])
+    setOpen(false)
     setSearch('')
   }
 
@@ -258,151 +320,152 @@ export function KnowledgeBaseMultiSelector({
     onChange(value.filter(item => item.id !== knowledgeBaseId))
   }
 
-  return (
-    <div
-      className="space-y-4 rounded-lg border border-border bg-base p-4"
-      data-testid="default-knowledge-base-selector"
-    >
-      <div className="space-y-2">
-        <Input
-          value={search}
-          onChange={event => setSearch(event.target.value)}
-          placeholder={t('common:bot.default_knowledge_bases_search_placeholder', '搜索知识库')}
-          disabled={disabled || loading}
-          data-testid="default-knowledge-base-search-input"
+  const handleWheel = (event: React.WheelEvent) => {
+    const list = listRef.current
+    if (!list) {
+      return
+    }
+
+    const isScrollingUp = event.deltaY < 0
+    const isScrollingDown = event.deltaY > 0
+    const isAtTop = list.scrollTop <= 0
+    const isAtBottom = list.scrollTop + list.clientHeight >= list.scrollHeight
+
+    if ((isScrollingUp && isAtTop) || (isScrollingDown && isAtBottom)) {
+      return
+    }
+
+    event.stopPropagation()
+  }
+
+  const renderListContent = () => {
+    if (loading) {
+      return (
+        <div className="flex items-center justify-center gap-2 py-8 text-sm text-text-muted">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          <span>{t('common:bot.default_knowledge_bases_loading', '知识库加载中...')}</span>
+        </div>
+      )
+    }
+
+    if (error) {
+      return (
+        <div className="py-8 text-center text-sm text-text-muted">
+          {t('common:bot.default_knowledge_bases_load_failed', '知识库加载失败')}
+        </div>
+      )
+    }
+
+    if (groupedAvailableItems.length === 0) {
+      return (
+        <div className="py-8 text-center text-sm text-text-muted">
+          {search
+            ? t('common:bot.default_knowledge_bases_no_match', '没有匹配的知识库')
+            : t('common:bot.default_knowledge_bases_no_options', '暂无可用知识库')}
+        </div>
+      )
+    }
+
+    let currentHeaderKey: string | null = null
+    const elements: React.ReactNode[] = []
+
+    for (const { option, group, headerKey, headerLabel } of groupedAvailableItems) {
+      if (currentHeaderKey !== headerKey) {
+        currentHeaderKey = headerKey
+        const HeaderIcon = getSourceIcon(group)
+        elements.push(
+          <div
+            key={`header-${headerKey}`}
+            className="flex items-center gap-1.5 border-b border-border bg-muted/50 px-3 py-2 text-xs font-medium text-text-muted"
+            data-testid={`default-knowledge-base-group-${group}`}
+          >
+            <HeaderIcon className="h-3 w-3" />
+            {headerLabel}
+          </div>
+        )
+      }
+
+      elements.push(
+        <KnowledgeBaseOptionRow
+          key={`${option.id}-${option.namespace}`}
+          item={option}
+          disabled={disabled}
+          onSelect={handleSelect}
+          t={t}
         />
-        <p className="text-xs text-text-muted">
-          {t(
-            'common:bot.default_knowledge_bases_used_for_new_chats',
-            '用于初始化新聊天的默认知识库。'
-          )}
-        </p>
-        <p className="text-xs text-text-muted">
-          {t(
-            'common:bot.default_knowledge_bases_append_hint',
-            '聊天时手动选择的知识库会在后续追加，不会覆盖这里的默认配置。'
-          )}
-        </p>
-      </div>
+      )
+    }
 
-      <div className="space-y-2">
-        <div className="flex items-center justify-between">
-          <h4 className="text-sm font-medium text-text-primary">
-            {t('common:bot.default_knowledge_bases_selected_section', '已选默认知识库')}
-          </h4>
-          <Badge variant="secondary" size="sm">
-            {t('common:bot.default_knowledge_bases_selected_count', {
-              count: value.length,
-              defaultValue: `已选 ${value.length} 个`,
-            })}
-          </Badge>
-        </div>
+    return elements
+  }
 
-        <div
-          className={cn(
-            SELECTED_SECTION_HEIGHT,
-            'overflow-y-auto rounded-lg border border-border bg-surface/40 p-3'
-          )}
-          data-testid="default-knowledge-base-selected-section"
+  return (
+    <div className="space-y-2" data-testid="default-knowledge-base-selector">
+      <Popover open={open && !disabled} onOpenChange={setOpen}>
+        <PopoverTrigger asChild>
+          <button
+            ref={triggerRef}
+            type="button"
+            className="flex h-9 w-full items-center justify-between rounded-md border border-border/50 bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+            disabled={disabled}
+            data-testid="default-knowledge-base-trigger"
+          >
+            <div className="flex items-center gap-2 text-text-muted">
+              <Database className="h-4 w-4 text-primary" />
+              <span>
+                {t('common:bot.default_knowledge_bases_select_to_add', '选择要添加的知识库...')}
+              </span>
+            </div>
+            <Plus className="h-4 w-4 opacity-50" />
+          </button>
+        </PopoverTrigger>
+        <PopoverContent
+          className="flex flex-col overflow-hidden border border-border p-0"
+          style={{ width: triggerWidth > 0 ? triggerWidth : '100%' }}
+          align="start"
+          side="bottom"
+          sideOffset={4}
+          data-testid="default-knowledge-base-popover"
         >
-          {selectedItems.length > 0 ? (
-            <div className="space-y-3">
-              {selectedItems.map(item => (
-                <KnowledgeBaseCard
-                  key={item.id}
-                  item={item}
-                  selected={true}
-                  disabled={disabled}
-                  onAdd={handleSelect}
-                  onRemove={handleRemove}
-                  t={t}
-                />
-              ))}
-            </div>
-          ) : (
-            <div className="flex h-full items-center justify-center rounded-lg border border-dashed border-border bg-base/70 px-4 text-center text-sm text-text-muted">
-              {t('common:bot.default_knowledge_bases_empty_selection', '尚未选择默认知识库')}
-            </div>
-          )}
-        </div>
+          <div className="shrink-0 border-b p-3">
+            <Input
+              value={search}
+              onChange={event => setSearch(event.target.value)}
+              placeholder={t('common:bot.default_knowledge_bases_search_placeholder', '搜索知识库')}
+              disabled={disabled || loading}
+              data-testid="default-knowledge-base-search-input"
+            />
+          </div>
+
+          <div ref={listRef} className="max-h-[320px] overflow-y-auto" onWheel={handleWheel}>
+            {renderListContent()}
+          </div>
+        </PopoverContent>
+      </Popover>
+
+      <div className="flex flex-wrap gap-1.5">
+        {selectedItems.map(item => (
+          <SelectedKnowledgeBaseChip
+            key={item.id}
+            item={item}
+            disabled={disabled}
+            onRemove={handleRemove}
+          />
+        ))}
       </div>
 
-      <div className="space-y-2">
-        <div className="flex items-center justify-between">
-          <h4 className="text-sm font-medium text-text-primary">
-            {t('common:bot.default_knowledge_bases_available_section', '可添加知识库')}
-          </h4>
-        </div>
-
-        <div
-          className={cn(
-            AVAILABLE_SECTION_HEIGHT,
-            'overflow-y-auto rounded-lg border border-border bg-surface/40 p-3'
-          )}
-          data-testid="default-knowledge-base-available-section"
-        >
-          {loading ? (
-            <div className="flex h-full items-center justify-center gap-2 text-sm text-text-muted">
-              <Loader2 className="h-4 w-4 animate-spin" />
-              <span>{t('common:bot.default_knowledge_bases_loading', '知识库加载中...')}</span>
-            </div>
-          ) : error ? (
-            <div className="flex h-full items-center justify-center rounded-lg border border-dashed border-border bg-base/70 px-4 text-center text-sm text-text-muted">
-              {t('common:bot.default_knowledge_bases_load_failed', '知识库加载失败')}
-            </div>
-          ) : availableItems.length === 0 ? (
-            <div className="flex h-full items-center justify-center rounded-lg border border-dashed border-border bg-base/70 px-4 text-center text-sm text-text-muted">
-              {search
-                ? t('common:bot.default_knowledge_bases_no_match', '没有匹配的知识库')
-                : t('common:bot.default_knowledge_bases_no_options', '暂无可用知识库')}
-            </div>
-          ) : (
-            <div className="space-y-4">
-              {(['personal', 'group', 'organization'] as KnowledgeBaseOptionSource[]).map(
-                source => {
-                  const items = groupedAvailableItems[source]
-                  if (items.length === 0) {
-                    return null
-                  }
-
-                  return (
-                    <section
-                      key={source}
-                      className="space-y-3"
-                      data-testid={`default-knowledge-base-group-${source}`}
-                    >
-                      <div className="sticky top-0 z-10 -mx-3 border-y border-border bg-surface/95 px-3 py-2 backdrop-blur">
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="text-xs font-medium uppercase tracking-[0.08em] text-text-secondary">
-                            {getGroupTitle(source, t)}
-                          </span>
-                          <Badge variant="secondary" size="sm">
-                            {items.length}
-                          </Badge>
-                        </div>
-                      </div>
-
-                      <div className="space-y-3">
-                        {items.map(item => (
-                          <KnowledgeBaseCard
-                            key={item.id}
-                            item={item}
-                            selected={false}
-                            disabled={disabled}
-                            onAdd={handleSelect}
-                            onRemove={handleRemove}
-                            t={t}
-                          />
-                        ))}
-                      </div>
-                    </section>
-                  )
-                }
-              )}
-            </div>
-          )}
-        </div>
-      </div>
+      <p className="text-xs text-text-muted">
+        {t(
+          'common:bot.default_knowledge_bases_used_for_new_chats',
+          '用于初始化新聊天的默认知识库。'
+        )}
+      </p>
+      <p className="text-xs text-text-muted">
+        {t(
+          'common:bot.default_knowledge_bases_append_hint',
+          '聊天时手动选择的知识库会在后续追加，不会覆盖这里的默认配置。'
+        )}
+      </p>
     </div>
   )
 }

@@ -238,6 +238,7 @@
     "default_knowledge_bases_source_shared": "共享",
     "default_knowledge_bases_updated_at": "最近更新",
     "default_knowledge_bases_selected_badge": "已选",
+    "default_knowledge_bases_select_to_add": "选择要添加的知识库...",
     "default_knowledge_bases_selected_count": "已选 {{count}} 个",
     "default_knowledge_bases_selected_count_one": "已选 {{count}} 个",
     "default_knowledge_bases_selected_count_other": "已选 {{count}} 个"

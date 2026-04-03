@@ -215,6 +215,7 @@
     "default_knowledge_bases_source_shared": "Shared",
     "default_knowledge_bases_updated_at": "Updated",
     "default_knowledge_bases_selected_badge": "Selected",
+    "default_knowledge_bases_select_to_add": "Select a knowledge base to add...",
     "default_knowledge_bases_selected_count": "{{count}} selected",
     "default_knowledge_bases_selected_count_one": "{{count}} selected",
     "default_knowledge_bases_selected_count_other": "{{count}} selected"

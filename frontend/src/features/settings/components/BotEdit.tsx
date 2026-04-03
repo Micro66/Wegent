@@ -1458,11 +1458,13 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                       </span>
                     </div>
                   </div>
-                  <KnowledgeBaseMultiSelector
-                    value={defaultKnowledgeBaseRefs}
-                    onChange={setDefaultKnowledgeBaseRefs}
-                    disabled={readOnly}
-                  />
+                  <div className="bg-base rounded-md p-2 min-h-[80px]">
+                    <KnowledgeBaseMultiSelector
+                      value={defaultKnowledgeBaseRefs}
+                      onChange={setDefaultKnowledgeBaseRefs}
+                      disabled={readOnly}
+                    />
+                  </div>
                 </div>
               )}
 
