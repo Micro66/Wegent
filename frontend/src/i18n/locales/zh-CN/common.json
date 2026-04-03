@@ -226,7 +226,21 @@
     "default_knowledge_bases_loading": "知识库加载中...",
     "default_knowledge_bases_load_failed": "知识库加载失败",
     "default_knowledge_bases_no_match": "没有匹配的知识库",
-    "default_knowledge_bases_no_options": "暂无可用知识库"
+    "default_knowledge_bases_no_options": "暂无可用知识库",
+    "default_knowledge_bases_selected_section": "已选默认知识库",
+    "default_knowledge_bases_available_section": "可添加知识库",
+    "default_knowledge_bases_group_personal": "个人知识库",
+    "default_knowledge_bases_group_group": "群组知识库",
+    "default_knowledge_bases_group_organization": "组织知识库",
+    "default_knowledge_bases_source_personal": "个人",
+    "default_knowledge_bases_source_group": "群组",
+    "default_knowledge_bases_source_organization": "组织",
+    "default_knowledge_bases_source_shared": "共享",
+    "default_knowledge_bases_updated_at": "最近更新",
+    "default_knowledge_bases_selected_badge": "已选",
+    "default_knowledge_bases_selected_count": "已选 {{count}} 个",
+    "default_knowledge_bases_selected_count_one": "已选 {{count}} 个",
+    "default_knowledge_bases_selected_count_other": "已选 {{count}} 个"
   },
   "messages": {
     "copy_markdown": "复制 Markdown 内容",

@@ -203,7 +203,21 @@
     "default_knowledge_bases_loading": "Loading knowledge bases...",
     "default_knowledge_bases_load_failed": "Failed to load knowledge bases",
     "default_knowledge_bases_no_match": "No matching knowledge bases",
-    "default_knowledge_bases_no_options": "No available knowledge bases"
+    "default_knowledge_bases_no_options": "No available knowledge bases",
+    "default_knowledge_bases_selected_section": "Selected default knowledge bases",
+    "default_knowledge_bases_available_section": "Available knowledge bases",
+    "default_knowledge_bases_group_personal": "Personal knowledge bases",
+    "default_knowledge_bases_group_group": "Group knowledge bases",
+    "default_knowledge_bases_group_organization": "Organization knowledge bases",
+    "default_knowledge_bases_source_personal": "Personal",
+    "default_knowledge_bases_source_group": "Group",
+    "default_knowledge_bases_source_organization": "Organization",
+    "default_knowledge_bases_source_shared": "Shared",
+    "default_knowledge_bases_updated_at": "Updated",
+    "default_knowledge_bases_selected_badge": "Selected",
+    "default_knowledge_bases_selected_count": "{{count}} selected",
+    "default_knowledge_bases_selected_count_one": "{{count}} selected",
+    "default_knowledge_bases_selected_count_other": "{{count}} selected"
   },
   "bots": {
     "title": "AI Assistant",

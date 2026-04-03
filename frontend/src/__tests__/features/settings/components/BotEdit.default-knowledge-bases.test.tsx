@@ -15,14 +15,45 @@ import { fetchUnifiedSkillsList } from '@/apis/skills'
 
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
-    t: (key: string) => key,
+    t: (key: string, options?: { count?: number }) => {
+      const translations: Record<string, string> = {
+        'bot.default_knowledge_bases_search_placeholder': 'Search knowledge bases',
+        'bot.default_knowledge_bases_used_for_new_chats':
+          'Used to initialize knowledge bases for new chats.',
+        'bot.default_knowledge_bases_append_hint':
+          'Manual chat-time selection appends additional knowledge bases later.',
+        'bot.default_knowledge_bases_selected_section': 'Selected default knowledge bases',
+        'bot.default_knowledge_bases_available_section': 'Available knowledge bases',
+        'bot.default_knowledge_bases_empty_selection': 'No default knowledge bases selected',
+        'bot.default_knowledge_bases_no_options': 'No available knowledge bases',
+        'bot.default_knowledge_bases_no_match': 'No matching knowledge bases',
+        'bot.default_knowledge_bases_loading': 'Loading knowledge bases...',
+        'bot.default_knowledge_bases_load_failed': 'Failed to load knowledge bases',
+        'bot.default_knowledge_bases_updated_at': 'Updated',
+        'bot.default_knowledge_bases_selected_badge': 'Selected',
+        'bot.default_knowledge_bases_selected_count': `${options?.count ?? 0} selected`,
+        'bot.default_knowledge_bases_group_personal': 'Personal knowledge bases',
+        'bot.default_knowledge_bases_group_group': 'Group knowledge bases',
+        'bot.default_knowledge_bases_group_organization': 'Organization knowledge bases',
+        'bot.default_knowledge_bases_source_personal': 'Personal',
+        'bot.default_knowledge_bases_source_group': 'Group',
+        'bot.default_knowledge_bases_source_organization': 'Organization',
+        'bot.default_knowledge_bases_source_shared': 'Shared',
+        'knowledge:document_count': `${options?.count ?? 0} document`,
+        'knowledge:documents_count': `${options?.count ?? 0} documents`,
+      }
+
+      const normalizedKey = key.startsWith('common:') ? key.replace(/^common:/, '') : key
+
+      return translations[key] ?? translations[normalizedKey] ?? key
+    },
     i18n: { language: 'en' },
   }),
 }))
 
 jest.mock('@/apis/knowledge-base', () => ({
   knowledgeBaseApi: {
-    list: jest.fn(),
+    getAllGrouped: jest.fn(),
   },
 }))
 
@@ -132,7 +163,7 @@ jest.mock('@/components/ui/switch', () => ({
 }))
 
 const mockedUpdateBot = botApis.updateBot as jest.Mock
-const mockedKnowledgeBaseList = knowledgeBaseApi.list as jest.Mock
+const mockedKnowledgeBaseGrouped = knowledgeBaseApi.getAllGrouped as jest.Mock
 const mockedGetUnifiedModels = modelApis.getUnifiedModels as jest.Mock
 const mockedGetUnifiedShells = shellApis.getUnifiedShells as jest.Mock
 const mockedFetchUnifiedSkillsList = fetchUnifiedSkillsList as jest.Mock
@@ -179,7 +210,7 @@ function renderBotEdit() {
 describe('BotEdit default knowledge bases', () => {
   beforeEach(() => {
     mockedUpdateBot.mockReset()
-    mockedKnowledgeBaseList.mockReset()
+    mockedKnowledgeBaseGrouped.mockReset()
     mockedGetUnifiedModels.mockReset()
     mockedGetUnifiedShells.mockReset()
     mockedFetchUnifiedSkillsList.mockReset()
@@ -191,38 +222,91 @@ describe('BotEdit default knowledge bases', () => {
       data: [{ name: 'gpt-4.1', type: 'public', namespace: 'default' }],
     })
     mockedFetchUnifiedSkillsList.mockResolvedValue([])
-    mockedKnowledgeBaseList.mockResolvedValue({
-      total: 2,
-      items: [
+    mockedKnowledgeBaseGrouped.mockResolvedValue({
+      personal: {
+        created_by_me: [
+          {
+            id: 101,
+            name: 'Product Docs',
+            description: 'Product references',
+            kb_type: 'notebook',
+            namespace: 'default',
+            document_count: 3,
+            updated_at: '2026-04-02T00:00:00Z',
+            created_at: '2026-04-01T00:00:00Z',
+            user_id: 7,
+            group_id: 'default',
+            group_name: 'Personal',
+            group_type: 'personal',
+          },
+        ],
+        shared_with_me: [
+          {
+            id: 404,
+            name: 'Support FAQ',
+            description: 'Shared support answers',
+            kb_type: 'notebook',
+            namespace: 'default',
+            document_count: 2,
+            updated_at: '2026-04-01T08:00:00Z',
+            created_at: '2026-03-30T00:00:00Z',
+            user_id: 9,
+            group_id: 'default',
+            group_name: 'Shared with me',
+            group_type: 'personal-shared',
+          },
+        ],
+      },
+      groups: [
         {
-          id: 101,
-          name: 'Product Docs',
-          description: 'Product references',
-          user_id: 7,
-          namespace: 'default',
-          document_count: 3,
-          is_active: true,
-          summary_enabled: false,
-          max_calls_per_conversation: 5,
-          exempt_calls_before_check: 0,
-          created_at: '2026-04-02T00:00:00Z',
-          updated_at: '2026-04-02T00:00:00Z',
-        },
-        {
-          id: 202,
-          name: 'Runbooks',
-          description: 'Ops guides',
-          user_id: 7,
-          namespace: 'default',
-          document_count: 4,
-          is_active: true,
-          summary_enabled: false,
-          max_calls_per_conversation: 5,
-          exempt_calls_before_check: 0,
-          created_at: '2026-04-02T00:00:00Z',
-          updated_at: '2026-04-02T00:00:00Z',
+          group_name: 'platform',
+          group_display_name: 'Platform',
+          kb_count: 1,
+          knowledge_bases: [
+            {
+              id: 202,
+              name: 'Runbooks',
+              description: 'Ops guides',
+              kb_type: 'notebook',
+              namespace: 'platform',
+              document_count: 4,
+              updated_at: '2026-04-02T12:30:00Z',
+              created_at: '2026-04-01T00:00:00Z',
+              user_id: 8,
+              group_id: 'platform',
+              group_name: 'Platform',
+              group_type: 'group',
+            },
+          ],
         },
       ],
+      organization: {
+        namespace: 'org',
+        display_name: 'Organization',
+        kb_count: 1,
+        knowledge_bases: [
+          {
+            id: 303,
+            name: 'Security Policies',
+            description: 'Company-wide security guidance',
+            kb_type: 'classic',
+            namespace: 'org',
+            document_count: 6,
+            updated_at: '2026-04-03T09:00:00Z',
+            created_at: '2026-04-01T00:00:00Z',
+            user_id: 1,
+            group_id: 'org',
+            group_name: 'Organization',
+            group_type: 'organization',
+          },
+        ],
+      },
+      summary: {
+        total_count: 3,
+        personal_count: 1,
+        group_count: 1,
+        organization_count: 1,
+      },
     })
     mockedUpdateBot.mockResolvedValue({
       id: 7,
@@ -249,6 +333,28 @@ describe('BotEdit default knowledge bases', () => {
 
     expect(await screen.findByTestId('default-knowledge-base-chip-101')).toBeInTheDocument()
     expect(screen.getByText('Product Docs')).toBeInTheDocument()
+  })
+
+  test('renders fixed selected and available sections with grouped metadata', async () => {
+    renderBotEdit()
+
+    expect(await screen.findByTestId('default-knowledge-base-selected-section')).toBeInTheDocument()
+    expect(screen.getByTestId('default-knowledge-base-available-section')).toBeInTheDocument()
+
+    expect(screen.getByTestId('default-knowledge-base-group-personal')).toBeInTheDocument()
+    expect(screen.getByTestId('default-knowledge-base-group-group')).toBeInTheDocument()
+    expect(screen.getByTestId('default-knowledge-base-group-organization')).toBeInTheDocument()
+
+    expect(screen.getByText('Ops guides')).toBeInTheDocument()
+    expect(screen.getByText('Company-wide security guidance')).toBeInTheDocument()
+    expect(screen.getByText('Shared support answers')).toBeInTheDocument()
+    expect(screen.getByText('Group')).toBeInTheDocument()
+    expect(screen.getByText('Organization')).toBeInTheDocument()
+    expect(screen.getByText('Shared')).toBeInTheDocument()
+    expect(screen.getByText('Platform')).toBeInTheDocument()
+    expect(screen.getByText('4 documents')).toBeInTheDocument()
+    expect(screen.getByText('6 documents')).toBeInTheDocument()
+    expect(screen.getAllByText(/Updated 2026-04-02/).length).toBeGreaterThan(0)
   })
 
   test('allows adding and removing multiple knowledge bases', async () => {
