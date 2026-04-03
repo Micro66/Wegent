@@ -44,17 +44,17 @@ describe('runtime config caching', () => {
     global.fetch = originalFetch
   })
 
-  test('fetchRuntimeConfig bypasses browser cache', async () => {
+  test('fetchRuntimeConfig uses default cache in non-development mode', async () => {
     await fetchRuntimeConfig()
 
-    expect(global.fetch).toHaveBeenCalledWith('/runtime-config', {
-      cache: 'no-store',
-    })
+    // In test/production mode, no cache override is applied
+    expect(global.fetch).toHaveBeenCalledWith('/runtime-config', {})
   })
 
-  test('runtime config route returns no-store cache headers', async () => {
+  test('runtime config route returns caching headers in non-development mode', async () => {
     const response = await GET()
 
-    expect(response.headers.get('Cache-Control')).toBe('no-store, max-age=0')
+    // In test/production mode, uses caching strategy
+    expect(response.headers.get('Cache-Control')).toBe('max-age=60, stale-while-revalidate=300')
   })
 })
