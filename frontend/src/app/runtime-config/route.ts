@@ -128,7 +128,10 @@ export async function GET() {
     },
     {
       headers: {
-        'Cache-Control': 'no-store, max-age=0',
+        'Cache-Control':
+          process.env.NODE_ENV === 'development'
+            ? 'no-store'
+            : 'max-age=60, stale-while-revalidate=300',
       },
     }
   )
