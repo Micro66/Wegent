@@ -1,6 +1,6 @@
 ---
 description: "Use this skill when the user wants to optimize, modify, or improve the system prompt of an AI agent. This includes requests like 'optimize the prompt', 'make the AI more focused on X', 'change the system prompt', 'improve the agent behavior', or 'modify how the AI responds'."
-displayName: "Prompt Optimization"
+displayName: "提示词管理工具"
 version: "2.0.0"
 author: "Wegent Team"
 tags: ["prompt", "optimization", "system-prompt", "agent-config", "ai-tuning"]
