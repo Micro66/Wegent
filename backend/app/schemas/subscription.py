@@ -520,6 +520,13 @@ class SubscriptionInDB(SubscriptionBase):
     trigger_config_error: Optional[str] = Field(
         None, description="Error message if trigger config is invalid"
     )
+    # Expiration fields
+    expires_at: Optional[datetime] = Field(
+        None, description="Calculated expiration timestamp"
+    )
+    is_expired: bool = Field(
+        False, description="Whether the subscription has expired"
+    )
     created_at: datetime
     updated_at: datetime
 
