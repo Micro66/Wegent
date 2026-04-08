@@ -284,6 +284,11 @@ class SubscriptionService:
             "failure_count": 0,
             "bound_task_id": 0,
             "market_whitelist_user_ids": market_whitelist_user_ids,
+            "expires_at": (
+                subscription_in.expires_at.isoformat()
+                if subscription_in.expires_at
+                else None
+            ),
         }
 
         # Create Subscription as a Kind resource
@@ -375,8 +380,9 @@ class SubscriptionService:
             ]
 
         # Check and update expired subscriptions
-        from app.services.subscription.helpers import is_subscription_expired
         from sqlalchemy.orm.attributes import flag_modified
+
+        from app.services.subscription.helpers import is_subscription_expired
 
         current_time = datetime.now(timezone.utc).replace(tzinfo=None)
         expired_updated = False
@@ -647,6 +653,17 @@ class SubscriptionService:
                     db, update_data["market_whitelist_user_ids"]
                 )
             )
+
+        # Update expiration time
+        if "expires_at" in update_data:
+            if update_data["expires_at"]:
+                internal["expires_at"] = (
+                    update_data["expires_at"].isoformat()
+                    if isinstance(update_data["expires_at"], datetime)
+                    else update_data["expires_at"]
+                )
+            else:
+                internal["expires_at"] = None
 
         # Update trigger configuration
         if "trigger_type" in update_data or "trigger_config" in update_data:
