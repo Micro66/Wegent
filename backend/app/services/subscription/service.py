@@ -374,6 +374,31 @@ class SubscriptionService:
                 if s.json.get("_internal", {}).get("trigger_type") == trigger_type.value
             ]
 
+        # Check and update expired subscriptions
+        from app.services.subscription.helpers import is_subscription_expired
+        from sqlalchemy.orm.attributes import flag_modified
+
+        current_time = datetime.now(timezone.utc).replace(tzinfo=None)
+        expired_updated = False
+
+        for sub in subscriptions:
+            internal = sub.json.get("_internal", {})
+            expires_at_str = internal.get("expires_at")
+            if expires_at_str:
+                try:
+                    expires_at = datetime.fromisoformat(expires_at_str)
+                    if is_subscription_expired(expires_at, current_time):
+                        if internal.get("enabled", True):
+                            internal["enabled"] = False
+                            sub.json["_internal"] = internal
+                            flag_modified(sub, "json")
+                            expired_updated = True
+                except (ValueError, TypeError):
+                    pass
+
+        if expired_updated:
+            db.commit()
+
         total = len(subscriptions)
         subscriptions = subscriptions[skip : skip + limit]
 
@@ -1163,6 +1188,29 @@ class SubscriptionService:
             }
         )
 
+        # Parse expiration information from _internal
+        expires_at = None
+        if internal.get("expires_at"):
+            try:
+                expires_at = datetime.fromisoformat(internal["expires_at"])
+            except (ValueError, TypeError):
+                pass
+
+        # Check if expired and auto-disable
+        from app.services.subscription.helpers import is_subscription_expired
+
+        is_expired = is_subscription_expired(expires_at)
+
+        if is_expired and internal.get("enabled", True):
+            internal["enabled"] = False
+            crd_json = subscription_crd.model_dump(mode="json")
+            crd_json["_internal"] = internal
+            subscription.json = crd_json
+            from sqlalchemy.orm.attributes import flag_modified
+
+            flag_modified(subscription, "json")
+            db.commit()
+
         return SubscriptionInDB(
             id=subscription.id,
             user_id=subscription.user_id,
@@ -1222,6 +1270,9 @@ class SubscriptionService:
             # Trigger config validation status
             trigger_config_valid=trigger_config_valid,
             trigger_config_error=trigger_config_error,
+            # Expiration fields
+            expires_at=expires_at,
+            is_expired=is_expired,
             created_at=subscription.created_at,
             updated_at=subscription.updated_at,
         )
