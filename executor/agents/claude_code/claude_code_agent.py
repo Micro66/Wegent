@@ -1272,8 +1272,14 @@ class ClaudeCodeAgent(Agent):
                 # Check if we're in an async context
                 try:
                     loop = asyncio.get_running_loop()
-                    # If we're in an async context, create a task
-                    asyncio.create_task(self._async_cancel_run())
+                    # If we're in an async context, use run_coroutine_threadsafe
+                    # to ensure interrupt() is actually executed
+                    future = asyncio.run_coroutine_threadsafe(
+                        self._async_cancel_run(), loop
+                    )
+                    # Wait for the interrupt to complete with a timeout
+                    # This ensures cancel_run() doesn't return before interrupt() is sent
+                    future.result(timeout=5)
                 except RuntimeError:
                     # No running event loop, run the async method in a new loop
                     # Copy ContextVars before creating new event loop
