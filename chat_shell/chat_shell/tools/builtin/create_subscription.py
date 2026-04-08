@@ -34,9 +34,9 @@ class CreateSubscriptionInput(BaseModel):
     description: Optional[str] = Field(
         default=None, description="Description of the subscription task"
     )
-    preview_id: Optional[str] = Field(
-        default=None,
-        description="Preview ID from preview_subscription tool. Required if user confirmed a preview.",
+    preview_id: str = Field(
+        ...,
+        description="Preview ID from preview_subscription tool. REQUIRED. Must call preview_subscription first.",
     )
 
     # Trigger configuration
@@ -121,10 +121,10 @@ class CreateSubscriptionTool(BaseTool):
     name: str = "create_subscription"
     display_name: str = "创建订阅任务"
     description: str = (
-        "⚠️ IMPORTANT: ONLY call this tool AFTER calling preview_subscription "
-        "AND receiving explicit user confirmation (e.g., '执行', '确认', '是的').\n\n"
-        "This tool ACTUALLY CREATES the subscription task. "
-        "It will start executing at scheduled times.\n\n"
+        "⚠️ IMPORTANT: This tool REQUIRES a valid preview_id from preview_subscription tool. "
+        "You MUST call preview_subscription first and get user confirmation before calling this tool.\n\n"
+        "This tool CREATES the subscription task after preview and confirmation. "
+        "The subscription will start executing at scheduled times.\n\n"
         "Use cases:\n"
         "- Recurring tasks: 'Remind me every Monday at 9am', 'Send daily report at 6pm'\n"
         "- One-time future tasks: 'Remind me tomorrow at 3pm', 'Check status next Friday'\n"
@@ -136,7 +136,7 @@ class CreateSubscriptionTool(BaseTool):
         "4. AI: Ask for confirmation\n"
         "5. User: '执行' / '确认' / '是的'\n"
         "6. AI: Call create_subscription with preview_id from preview_subscription\n\n"
-        "DO NOT call this tool directly without preview and confirmation."
+        "DO NOT call this tool without first calling preview_subscription."
     )
     args_schema: type[BaseModel] = CreateSubscriptionInput
 
@@ -180,8 +180,8 @@ class CreateSubscriptionTool(BaseTool):
         display_name: str,
         trigger_type: Literal["cron", "interval", "one_time"],
         prompt_template: str,
+        preview_id: str,
         description: Optional[str] = None,
-        preview_id: Optional[str] = None,
         cron_expression: Optional[str] = None,
         interval_value: Optional[int] = None,
         interval_unit: Optional[Literal["minutes", "hours", "days"]] = None,
@@ -213,63 +213,36 @@ class CreateSubscriptionTool(BaseTool):
         Returns:
             JSON string with creation result
         """
-        # If preview_id is provided, load configuration from preview storage
-        if preview_id:
-            from .preview_subscription import clear_preview, get_preview_data
+        # preview_id is required - always load from preview storage
+        from chat_shell.services.storage.preview_storage import get_preview, clear_preview
 
-            preview_data = get_preview_data(preview_id)
-            if preview_data:
-                # Use preview configuration
-                display_name = preview_data.get("display_name", display_name)
-                description = preview_data.get("description", description)
-                trigger_type = preview_data.get("trigger_type", trigger_type)
-                trigger_config = preview_data.get("trigger_config", {})
-                prompt_template = preview_data.get("prompt_template", prompt_template)
-                preserve_history = preview_data.get(
-                    "preserve_history", preserve_history
-                )
-                history_message_count = preview_data.get(
-                    "history_message_count", history_message_count
-                )
-                retry_count = preview_data.get("retry_count", retry_count)
-                timeout_seconds = preview_data.get("timeout_seconds", timeout_seconds)
-
-                # Clear preview after using it
-                clear_preview(preview_id)
-                logger.info(
-                    f"[CreateSubscriptionTool] Using preview {preview_id} to create subscription"
-                )
-            else:
-                # Preview expired or invalid
-                return json.dumps(
-                    {
-                        "success": False,
-                        "error": "预览已过期或无效，请重新创建预览。",
-                    },
-                    ensure_ascii=False,
-                )
-        else:
-            # No preview_id, validate parameters directly
-            validation_error = self._validate_trigger_config(
-                trigger_type=trigger_type,
-                cron_expression=cron_expression,
-                interval_value=interval_value,
-                interval_unit=interval_unit,
-                execute_at=execute_at,
+        preview_data = get_preview(preview_id)
+        if not preview_data:
+            return json.dumps(
+                {
+                    "success": False,
+                    "error": "预览已过期或无效，请重新调用 preview_subscription 工具进行预览。",
+                },
+                ensure_ascii=False,
             )
-            if validation_error:
-                return json.dumps(
-                    {"success": False, "error": validation_error}, ensure_ascii=False
-                )
 
-            # Build trigger config dict
-            trigger_config = self._build_trigger_config(
-                trigger_type=trigger_type,
-                cron_expression=cron_expression,
-                interval_value=interval_value,
-                interval_unit=interval_unit,
-                execute_at=execute_at,
-            )
+        # Use preview configuration
+        display_name = preview_data.get("display_name", display_name)
+        description = preview_data.get("description", description)
+        trigger_type = preview_data.get("trigger_type", trigger_type)
+        trigger_config = preview_data.get("trigger_config", {})
+        prompt_template = preview_data.get("prompt_template", prompt_template)
+        preserve_history = preview_data.get("preserve_history", False)
+        history_message_count = preview_data.get("history_message_count", 10)
+        retry_count = preview_data.get("retry_count", 1)
+        timeout_seconds = preview_data.get("timeout_seconds", 600)
+        expires_at = preview_data.get("expires_at")  # Calculated expiration
+
+        # Clear preview after using it
+        clear_preview(preview_id)
+        logger.info(
+            f"[CreateSubscriptionTool] Using preview {preview_id} to create subscription"
+        )
 
         # Generate unique subscription name
         subscription_name = self._generate_unique_name(display_name)
@@ -287,6 +260,7 @@ class CreateSubscriptionTool(BaseTool):
                 history_message_count=history_message_count,
                 retry_count=retry_count,
                 timeout_seconds=timeout_seconds,
+                expires_at=expires_at,
             )
         except ImportError:
             # Fall back to HTTP API (HTTP mode)
@@ -301,6 +275,7 @@ class CreateSubscriptionTool(BaseTool):
                 history_message_count=history_message_count,
                 retry_count=retry_count,
                 timeout_seconds=timeout_seconds,
+                expires_at=expires_at,
             )
 
     def _validate_trigger_config(
@@ -429,6 +404,7 @@ class CreateSubscriptionTool(BaseTool):
         history_message_count: int,
         retry_count: int,
         timeout_seconds: int,
+        expires_at: Optional[str] = None,
     ) -> str:
         """Create subscription using backend service (package mode)."""
         from app.db.session import SessionLocal
@@ -468,6 +444,25 @@ class CreateSubscriptionTool(BaseTool):
                 db, subscription_in=subscription_data, user_id=self.user_id
             )
 
+            # Store expires_at in subscription _internal if provided
+            if expires_at and result:
+                from app.models.kind import Kind
+                subscription = (
+                    db.query(Kind)
+                    .filter(Kind.id == result.id, Kind.kind == "Subscription")
+                    .first()
+                )
+                if subscription:
+                    internal = subscription.json.get("_internal", {})
+                    internal["expires_at"] = expires_at
+                    subscription.json["_internal"] = internal
+                    from sqlalchemy.orm.attributes import flag_modified
+                    flag_modified(subscription, "json")
+                    db.commit()
+                    db.refresh(subscription)
+                    # Re-convert to get updated data
+                    result = subscription_service._convert_to_subscription_in_db(subscription, db=db)
+
             return self._format_success_response(
                 subscription_id=result.id,
                 name=result.name,
@@ -504,6 +499,7 @@ class CreateSubscriptionTool(BaseTool):
         history_message_count: int,
         retry_count: int,
         timeout_seconds: int,
+        expires_at: Optional[str] = None,
     ) -> str:
         """Create subscription via HTTP API (HTTP mode).
 
@@ -547,6 +543,7 @@ class CreateSubscriptionTool(BaseTool):
                 "timeout_seconds": timeout_seconds,
                 "enabled": True,
                 "model_ref": model_ref,
+                "expires_at": expires_at,
             }
 
             async with httpx.AsyncClient(timeout=30.0) as client:
