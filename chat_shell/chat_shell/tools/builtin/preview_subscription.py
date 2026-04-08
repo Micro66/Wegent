@@ -11,63 +11,24 @@ for user confirmation before calling create_subscription.
 
 import json
 import logging
-import time
 import uuid
+from datetime import datetime, timedelta
 from typing import Any, Literal, Optional
 
 from langchain_core.callbacks import CallbackManagerForToolRun
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
 
+from chat_shell.services.storage.preview_storage import (
+    clear_preview,
+    get_preview,
+    store_preview,
+)
+
 logger = logging.getLogger(__name__)
 
-# In-memory storage for preview data with TTL
-_preview_storage: dict[str, dict[str, Any]] = {}
-_preview_timestamps: dict[str, float] = {}
-PREVIEW_TTL_SECONDS = 300  # 5 minutes
-
-
-def _store_preview(preview_id: str, data: dict) -> None:
-    """Store preview data with timestamp."""
-    _preview_storage[preview_id] = data
-    _preview_timestamps[preview_id] = time.time()
-    logger.debug(f"Stored preview {preview_id}, current count: {len(_preview_storage)}")
-
-
-def _get_preview(preview_id: str) -> Optional[dict]:
-    """Retrieve preview data if not expired."""
-    # Check if preview exists
-    if preview_id not in _preview_storage:
-        return None
-
-    # Check if expired
-    timestamp = _preview_timestamps.get(preview_id, 0)
-    if time.time() - timestamp > PREVIEW_TTL_SECONDS:
-        # Clean up expired preview
-        _cleanup_preview(preview_id)
-        return None
-
-    return _preview_storage[preview_id]
-
-
-def _cleanup_preview(preview_id: str) -> None:
-    """Remove preview data from storage."""
-    _preview_storage.pop(preview_id, None)
-    _preview_timestamps.pop(preview_id, None)
-
-
-def _cleanup_expired_previews() -> None:
-    """Clean up all expired previews."""
-    current_time = time.time()
-    expired_ids = [
-        preview_id
-        for preview_id, timestamp in _preview_timestamps.items()
-        if current_time - timestamp > PREVIEW_TTL_SECONDS
-    ]
-    for preview_id in expired_ids:
-        _cleanup_preview(preview_id)
-    if expired_ids:
-        logger.debug(f"Cleaned up {len(expired_ids)} expired previews")
+# Re-export for backward compatibility
+__all__ = ["PreviewSubscriptionTool", "get_preview", "clear_preview"]
 
 
 class PreviewSubscriptionInput(BaseModel):
@@ -126,6 +87,22 @@ class PreviewSubscriptionInput(BaseModel):
     )
     timeout_seconds: int = Field(
         default=600, ge=60, le=3600, description="Execution timeout in seconds"
+    )
+
+    # Expiration configuration - both types converted to expires_at
+    expiration_type: Optional[Literal["fixed_date", "duration_days"]] = Field(
+        default=None,
+        description="Expiration type: fixed_date (specific date) or duration_days (days from creation)"
+    )
+    expiration_fixed_date: Optional[str] = Field(
+        default=None,
+        description="Fixed expiration date in ISO format (e.g., '2025-12-31T23:59:59'), required when expiration_type='fixed_date'"
+    )
+    expiration_duration_days: Optional[int] = Field(
+        default=None,
+        ge=1,
+        le=3650,
+        description="Number of days until expiration (1-3650), required when expiration_type='duration_days'"
     )
 
 
@@ -208,6 +185,10 @@ class PreviewSubscriptionTool(BaseTool):
         history_message_count: int = 10,
         retry_count: int = 1,
         timeout_seconds: int = 600,
+        # Expiration parameters
+        expiration_type: Optional[Literal["fixed_date", "duration_days"]] = None,
+        expiration_fixed_date: Optional[str] = None,
+        expiration_duration_days: Optional[int] = None,
         run_manager: CallbackManagerForToolRun | None = None,
     ) -> str:
         """Generate subscription preview without creating it.
@@ -225,10 +206,13 @@ class PreviewSubscriptionTool(BaseTool):
             history_message_count: Number of history messages to preserve
             retry_count: Retry count on failure
             timeout_seconds: Execution timeout
+            expiration_type: Expiration type (fixed_date or duration_days)
+            expiration_fixed_date: Fixed expiration date (ISO format)
+            expiration_duration_days: Days until expiration
             run_manager: Callback manager
 
         Returns:
-            JSON string with preview_id and preview table
+            JSON string with preview_id, execution_id and preview table
         """
         # Validate trigger configuration
         validation_error = self._validate_trigger_config(
@@ -243,8 +227,37 @@ class PreviewSubscriptionTool(BaseTool):
                 {"success": False, "error": validation_error}, ensure_ascii=False
             )
 
-        # Generate preview_id
+        # Validate and calculate expiration
+        expires_at = None
+        if expiration_type:
+            if expiration_type == "fixed_date":
+                if not expiration_fixed_date:
+                    return json.dumps(
+                        {"success": False, "error": "expiration_fixed_date is required when expiration_type='fixed_date'"},
+                        ensure_ascii=False
+                    )
+                # Validate ISO format
+                try:
+                    datetime.fromisoformat(expiration_fixed_date.replace("Z", "+00:00"))
+                    expires_at = expiration_fixed_date
+                except ValueError as e:
+                    return json.dumps(
+                        {"success": False, "error": f"Invalid expiration_fixed_date format: {e}"},
+                        ensure_ascii=False
+                    )
+            elif expiration_type == "duration_days":
+                if expiration_duration_days is None:
+                    return json.dumps(
+                        {"success": False, "error": "expiration_duration_days is required when expiration_type='duration_days'"},
+                        ensure_ascii=False
+                    )
+                # Calculate expires_at from now + duration
+                calculated = datetime.now() + timedelta(days=expiration_duration_days)
+                expires_at = calculated.isoformat()
+
+        # Generate preview_id and execution_id
         preview_id = f"preview_{uuid.uuid4().hex[:8]}"
+        execution_id = f"exec_{uuid.uuid4().hex[:12]}"
 
         # Build trigger config dict
         trigger_config = self._build_trigger_config(
@@ -258,6 +271,7 @@ class PreviewSubscriptionTool(BaseTool):
         # Store preview data
         preview_data = {
             "preview_id": preview_id,
+            "execution_id": execution_id,
             "display_name": display_name,
             "description": description,
             "trigger_type": trigger_type,
@@ -267,6 +281,7 @@ class PreviewSubscriptionTool(BaseTool):
             "history_message_count": history_message_count,
             "retry_count": retry_count,
             "timeout_seconds": timeout_seconds,
+            "expires_at": expires_at,  # Calculated expiration time
             "user_id": self.user_id,
             "team_id": self.team_id,
             "team_namespace": self.team_namespace,
@@ -275,11 +290,8 @@ class PreviewSubscriptionTool(BaseTool):
             "model_namespace": self.model_namespace,
         }
 
-        # Clean up expired previews first
-        _cleanup_expired_previews()
-
-        # Store the preview
-        _store_preview(preview_id, preview_data)
+        # Store the preview (Redis with TTL)
+        store_preview(preview_id, preview_data)
 
         # Generate preview table
         preview_table = self._format_preview_table(
@@ -292,6 +304,7 @@ class PreviewSubscriptionTool(BaseTool):
             history_message_count=history_message_count,
             retry_count=retry_count,
             timeout_seconds=timeout_seconds,
+            expires_at=expires_at,
         )
 
         logger.info(
@@ -302,6 +315,7 @@ class PreviewSubscriptionTool(BaseTool):
             {
                 "success": True,
                 "preview_id": preview_id,
+                "execution_id": execution_id,
                 "preview_table": preview_table,
                 "message": "检测到您需要创建定时任务，请确认以下配置：",
             },
@@ -399,6 +413,7 @@ class PreviewSubscriptionTool(BaseTool):
         history_message_count: int,
         retry_count: int,
         timeout_seconds: int,
+        expires_at: Optional[str] = None,
     ) -> str:
         """Format a markdown preview table."""
         trigger_desc = self._format_trigger_description(trigger_type, trigger_config)
@@ -411,6 +426,11 @@ class PreviewSubscriptionTool(BaseTool):
         # Escape pipe characters in prompt for markdown table
         prompt_display = prompt_display.replace("|", "\\|")
 
+        # Build expiration description
+        expiration_desc = "无"
+        if expires_at:
+            expiration_desc = expires_at.replace("T", " ")
+
         lines = [
             "### 订阅任务预览",
             "",
@@ -421,6 +441,7 @@ class PreviewSubscriptionTool(BaseTool):
             f"| **保留历史** | {'是' if preserve_history else '否'} ({history_message_count} 条) |",
             f"| **重试次数** | {retry_count} |",
             f"| **超时时间** | {timeout_seconds} 秒 |",
+            f"| **过期时间** | {expiration_desc} |",
         ]
 
         if description:
@@ -454,13 +475,4 @@ def get_preview_data(preview_id: str) -> Optional[dict]:
     Returns:
         Preview data dict if found and not expired, None otherwise
     """
-    return _get_preview(preview_id)
-
-
-def clear_preview(preview_id: str) -> None:
-    """Clear preview data after successful creation.
-
-    Args:
-        preview_id: The preview ID to clear
-    """
-    _cleanup_preview(preview_id)
+    return get_preview(preview_id)
