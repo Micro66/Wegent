@@ -6,28 +6,28 @@
 
 This module tests:
 - Preview generation without creating subscription
-- Preview storage with TTL
+- Preview storage with TTL (Redis-based)
 - Preview retrieval and cleanup
 - Preview table formatting
 - Input validation
+- Expiration configuration
 """
 
 import json
-import time
-from unittest.mock import patch
+from datetime import datetime, timedelta
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from chat_shell.services.storage.preview_storage import (
+    clear_preview,
+    delete_preview,
+    get_preview,
+    store_preview,
+)
 from chat_shell.tools.builtin.preview_subscription import (
     PreviewSubscriptionInput,
     PreviewSubscriptionTool,
-    _cleanup_expired_previews,
-    _cleanup_preview,
-    _get_preview,
-    _preview_storage,
-    _preview_timestamps,
-    _store_preview,
-    clear_preview,
     get_preview_data,
 )
 
@@ -110,135 +110,127 @@ class TestPreviewSubscriptionInput:
         assert input_data.timeout_seconds == 600
         assert input_data.description is None
 
+    def test_expiration_fixed_date_input_valid(self):
+        """Test valid fixed date expiration input."""
+        input_data = PreviewSubscriptionInput(
+            display_name="Test",
+            trigger_type="cron",
+            cron_expression="0 9 * * *",
+            prompt_template="Test",
+            expiration_type="fixed_date",
+            expiration_fixed_date="2025-12-31T23:59:59",
+        )
+        assert input_data.expiration_type == "fixed_date"
+        assert input_data.expiration_fixed_date == "2025-12-31T23:59:59"
+
+    def test_expiration_duration_days_input_valid(self):
+        """Test valid duration days expiration input."""
+        input_data = PreviewSubscriptionInput(
+            display_name="Test",
+            trigger_type="cron",
+            cron_expression="0 9 * * *",
+            prompt_template="Test",
+            expiration_type="duration_days",
+            expiration_duration_days=7,
+        )
+        assert input_data.expiration_type == "duration_days"
+        assert input_data.expiration_duration_days == 7
+
+    def test_expiration_no_config(self):
+        """Test that expiration is optional."""
+        input_data = PreviewSubscriptionInput(
+            display_name="Test",
+            trigger_type="cron",
+            cron_expression="0 9 * * *",
+            prompt_template="Test",
+        )
+        assert input_data.expiration_type is None
+        assert input_data.expiration_fixed_date is None
+        assert input_data.expiration_duration_days is None
+
 
 class TestPreviewStorage:
-    """Tests for preview storage mechanism."""
-
-    def setup_method(self):
-        """Clear storage before each test."""
-        _preview_storage.clear()
-        _preview_timestamps.clear()
-
-    def teardown_method(self):
-        """Clear storage after each test."""
-        _preview_storage.clear()
-        _preview_timestamps.clear()
+    """Tests for Redis-based preview storage mechanism."""
 
     def test_store_preview(self):
-        """Test storing preview data."""
+        """Test storing preview data in Redis."""
         # Arrange
-        preview_id = "preview_abc123"
+        preview_id = "preview_test_store"
         data = {"display_name": "Test", "trigger_type": "cron"}
 
         # Act
-        _store_preview(preview_id, data)
+        result = store_preview(preview_id, data)
 
         # Assert
-        assert preview_id in _preview_storage
-        assert _preview_storage[preview_id] == data
-        assert preview_id in _preview_timestamps
+        assert result is True
+        # Verify by retrieving
+        stored = get_preview(preview_id)
+        assert stored == data
+        # Cleanup
+        delete_preview(preview_id)
 
     def test_get_preview_existing(self):
-        """Test retrieving existing preview."""
+        """Test retrieving existing preview from Redis."""
         # Arrange
-        preview_id = "preview_abc123"
+        preview_id = "preview_test_get"
         data = {"display_name": "Test", "trigger_type": "cron"}
-        _store_preview(preview_id, data)
+        store_preview(preview_id, data)
 
         # Act
-        result = _get_preview(preview_id)
+        result = get_preview(preview_id)
 
         # Assert
         assert result == data
+        # Cleanup
+        delete_preview(preview_id)
 
     def test_get_preview_nonexistent(self):
         """Test retrieving non-existent preview."""
         # Act
-        result = _get_preview("preview_nonexistent")
+        result = get_preview("preview_nonexistent_xyz")
 
         # Assert
         assert result is None
 
-    def test_get_preview_expired(self):
-        """Test retrieving expired preview."""
+    def test_delete_preview(self):
+        """Test deleting specific preview from Redis."""
         # Arrange
-        preview_id = "preview_expired"
-        data = {"display_name": "Test"}
-        _store_preview(preview_id, data)
-
-        # Manually set timestamp to be expired
-        _preview_timestamps[preview_id] = (
-            time.time() - 400
-        )  # 400 seconds ago (TTL is 300)
+        preview_id = "preview_test_delete"
+        store_preview(preview_id, {"test": "data"})
 
         # Act
-        result = _get_preview(preview_id)
+        result = delete_preview(preview_id)
 
         # Assert
-        assert result is None
-        assert preview_id not in _preview_storage
+        assert result is True
+        assert get_preview(preview_id) is None
 
-    def test_cleanup_preview(self):
-        """Test cleaning up specific preview."""
+    def test_clear_preview_public_interface(self):
+        """Test clear_preview public interface function."""
         # Arrange
-        preview_id = "preview_cleanup"
-        _store_preview(preview_id, {"test": "data"})
+        preview_id = "preview_test_clear"
+        store_preview(preview_id, {"test": "data"})
 
         # Act
-        _cleanup_preview(preview_id)
+        clear_preview(preview_id)
 
         # Assert
-        assert preview_id not in _preview_storage
-        assert preview_id not in _preview_timestamps
-
-    def test_cleanup_expired_previews(self):
-        """Test cleaning up all expired previews."""
-        # Arrange
-        expired_id1 = "preview_expired1"
-        expired_id2 = "preview_expired2"
-        valid_id = "preview_valid"
-
-        _store_preview(expired_id1, {"test": "data1"})
-        _store_preview(expired_id2, {"test": "data2"})
-        _store_preview(valid_id, {"test": "data3"})
-
-        # Set expired timestamps
-        _preview_timestamps[expired_id1] = time.time() - 400
-        _preview_timestamps[expired_id2] = time.time() - 500
-        # valid_id keeps current timestamp
-
-        # Act
-        _cleanup_expired_previews()
-
-        # Assert
-        assert expired_id1 not in _preview_storage
-        assert expired_id2 not in _preview_storage
-        assert valid_id in _preview_storage
+        assert get_preview(preview_id) is None
 
     def test_get_preview_data_public_interface(self):
         """Test get_preview_data public interface function."""
         # Arrange
-        preview_id = "preview_public"
+        preview_id = "preview_test_public"
         data = {"display_name": "Test Task"}
-        _store_preview(preview_id, data)
+        store_preview(preview_id, data)
 
         # Act
         result = get_preview_data(preview_id)
 
         # Assert
         assert result == data
-
-    def test_clear_preview_public_interface(self):
-        """Test clear_preview public interface function."""
-        # Arrange
-        preview_id = "preview_clear"
-        _store_preview(preview_id, {"test": "data"})
-
-        # Act
-        clear_preview(preview_id)
-
-        # Assert
-        assert preview_id not in _preview_storage
+        # Cleanup
+        delete_preview(preview_id)
 
 
 class TestPreviewSubscriptionToolValidation:
@@ -314,6 +306,58 @@ class TestPreviewSubscriptionToolValidation:
         assert error is not None
         assert "execute_at is required" in error
 
+    @pytest.mark.asyncio
+    async def test_validate_expiration_fixed_date_missing_date(self):
+        """Test validation fails when fixed_date is missing."""
+        # Act
+        result = await self.tool._arun(
+            display_name="Test",
+            trigger_type="cron",
+            prompt_template="Test",
+            cron_expression="0 9 * * *",
+            expiration_type="fixed_date",
+        )
+
+        # Assert
+        response = json.loads(result)
+        assert response["success"] is False
+        assert "expiration_fixed_date is required" in response["error"]
+
+    @pytest.mark.asyncio
+    async def test_validate_expiration_duration_days_missing_days(self):
+        """Test validation fails when duration_days is missing."""
+        # Act
+        result = await self.tool._arun(
+            display_name="Test",
+            trigger_type="cron",
+            prompt_template="Test",
+            cron_expression="0 9 * * *",
+            expiration_type="duration_days",
+        )
+
+        # Assert
+        response = json.loads(result)
+        assert response["success"] is False
+        assert "expiration_duration_days is required" in response["error"]
+
+    @pytest.mark.asyncio
+    async def test_validate_expiration_invalid_date_format(self):
+        """Test validation fails for invalid date format."""
+        # Act
+        result = await self.tool._arun(
+            display_name="Test",
+            trigger_type="cron",
+            prompt_template="Test",
+            cron_expression="0 9 * * *",
+            expiration_type="fixed_date",
+            expiration_fixed_date="invalid-date",
+        )
+
+        # Assert
+        response = json.loads(result)
+        assert response["success"] is False
+        assert "Invalid expiration_fixed_date format" in response["error"]
+
 
 class TestPreviewSubscriptionToolFormatting:
     """Tests for PreviewSubscriptionTool formatting."""
@@ -327,14 +371,6 @@ class TestPreviewSubscriptionToolFormatting:
             team_namespace="default",
             timezone="Asia/Shanghai",
         )
-        # Clear storage
-        _preview_storage.clear()
-        _preview_timestamps.clear()
-
-    def teardown_method(self):
-        """Clear storage after each test."""
-        _preview_storage.clear()
-        _preview_timestamps.clear()
 
     def test_format_cron_trigger_description(self):
         """Test formatting cron trigger description."""
@@ -382,6 +418,7 @@ class TestPreviewSubscriptionToolFormatting:
             history_message_count=20,
             retry_count=2,
             timeout_seconds=1200,
+            expires_at="2025-12-31T23:59:59",
         )
 
         # Assert
@@ -390,6 +427,8 @@ class TestPreviewSubscriptionToolFormatting:
         assert "0 9 * * *" in table
         assert "保留历史" in table
         assert "是" in table
+        assert "过期时间" in table
+        assert "2025-12-31" in table
         assert "执行" in table  # Confirmation prompt
         assert "取消" in table  # Cancel option
 
@@ -406,6 +445,7 @@ class TestPreviewSubscriptionToolFormatting:
             history_message_count=10,
             retry_count=1,
             timeout_seconds=600,
+            expires_at=None,
         )
 
         # Assert
@@ -413,6 +453,8 @@ class TestPreviewSubscriptionToolFormatting:
         assert "30" in table
         assert "分钟" in table
         assert "否" in table  # Not preserving history
+        assert "过期时间" in table
+        assert "无" in table  # No expiration
 
     def test_format_preview_table_escapes_pipe(self):
         """Test that pipe characters are escaped in markdown table."""
@@ -427,6 +469,7 @@ class TestPreviewSubscriptionToolFormatting:
             history_message_count=10,
             retry_count=1,
             timeout_seconds=600,
+            expires_at=None,
         )
 
         # Assert
@@ -448,6 +491,7 @@ class TestPreviewSubscriptionToolFormatting:
             history_message_count=10,
             retry_count=1,
             timeout_seconds=600,
+            expires_at=None,
         )
 
         # Assert - verify truncation is applied
@@ -468,14 +512,6 @@ class TestPreviewSubscriptionToolAsyncExecution:
             team_namespace="default",
             timezone="Asia/Shanghai",
         )
-        # Clear storage
-        _preview_storage.clear()
-        _preview_timestamps.clear()
-
-    def teardown_method(self):
-        """Clear storage after each test."""
-        _preview_storage.clear()
-        _preview_timestamps.clear()
 
     def test_sync_run_raises_not_implemented(self):
         """Test that sync _run raises NotImplementedError."""
@@ -520,13 +556,18 @@ class TestPreviewSubscriptionToolAsyncExecution:
         assert response["success"] is True
         assert "preview_id" in response
         assert response["preview_id"].startswith("preview_")
+        assert "execution_id" in response
+        assert response["execution_id"].startswith("exec_")
         assert "preview_table" in response
         assert "订阅任务预览" in response["preview_table"]
         assert "Daily Report" in response["preview_table"]
 
+        # Cleanup
+        delete_preview(response["preview_id"])
+
     @pytest.mark.asyncio
     async def test_arun_stores_preview_data(self):
-        """Test that _arun stores preview data in storage."""
+        """Test that _arun stores preview data in Redis."""
         # Act
         result = await self.tool._arun(
             display_name="Test Task",
@@ -542,8 +583,8 @@ class TestPreviewSubscriptionToolAsyncExecution:
         response = json.loads(result)
         preview_id = response["preview_id"]
 
-        # Verify data is stored
-        stored_data = _get_preview(preview_id)
+        # Verify data is stored in Redis
+        stored_data = get_preview(preview_id)
         assert stored_data is not None
         assert stored_data["display_name"] == "Test Task"
         assert stored_data["trigger_type"] == "interval"
@@ -552,6 +593,81 @@ class TestPreviewSubscriptionToolAsyncExecution:
         assert stored_data["prompt_template"] == "Test prompt"
         assert stored_data["user_id"] == 1
         assert stored_data["team_id"] == 10
+        assert "execution_id" in stored_data
+
+        # Cleanup
+        delete_preview(preview_id)
+
+    @pytest.mark.asyncio
+    async def test_arun_returns_execution_id(self):
+        """Test that _arun returns execution_id."""
+        result = await self.tool._arun(
+            display_name="Test Task",
+            trigger_type="cron",
+            prompt_template="Test prompt",
+            cron_expression="0 9 * * *",
+        )
+
+        response = json.loads(result)
+        assert response["success"] is True
+        assert "execution_id" in response
+        assert response["execution_id"].startswith("exec_")
+
+        # Cleanup
+        delete_preview(response["preview_id"])
+
+    @pytest.mark.asyncio
+    async def test_arun_stores_expires_at_for_fixed_date(self):
+        """Test that fixed_date expiration is stored as expires_at."""
+        result = await self.tool._arun(
+            display_name="Test Task",
+            trigger_type="cron",
+            prompt_template="Test prompt",
+            cron_expression="0 9 * * *",
+            expiration_type="fixed_date",
+            expiration_fixed_date="2025-12-31T23:59:59",
+        )
+
+        response = json.loads(result)
+        preview_id = response["preview_id"]
+
+        # Verify expires_at is stored (using Redis)
+        stored_data = get_preview(preview_id)
+        assert stored_data is not None
+        assert stored_data["expires_at"] == "2025-12-31T23:59:59"
+
+        # Cleanup
+        delete_preview(preview_id)
+
+    @pytest.mark.asyncio
+    async def test_arun_calculates_expires_at_for_duration_days(self):
+        """Test that duration_days is converted to expires_at."""
+        result = await self.tool._arun(
+            display_name="Test Task",
+            trigger_type="cron",
+            prompt_template="Test prompt",
+            cron_expression="0 9 * * *",
+            expiration_type="duration_days",
+            expiration_duration_days=7,
+        )
+
+        response = json.loads(result)
+        preview_id = response["preview_id"]
+
+        # Verify expires_at is calculated and stored (using Redis)
+        stored_data = get_preview(preview_id)
+        assert stored_data is not None
+        assert stored_data["expires_at"] is not None
+
+        # Verify it's a valid ISO datetime
+        expires_at = datetime.fromisoformat(stored_data["expires_at"])
+        # Should be approximately 7 days from now
+        expected_min = datetime.now() + timedelta(days=6, hours=23)
+        expected_max = datetime.now() + timedelta(days=7, hours=1)
+        assert expected_min <= expires_at <= expected_max
+
+        # Cleanup
+        delete_preview(preview_id)
 
 
 class TestPreviewSubscriptionToolMetadata:
