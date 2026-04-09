@@ -77,10 +77,6 @@ class Settings(BaseSettings):
     CHAT_HISTORY_MAX_MESSAGES: int = 50
     CHAT_API_TIMEOUT_SECONDS: int = 300
 
-    # ========== Redis Configuration ==========
-    REDIS_URL: str = "redis://localhost:6379/0"
-    PREVIEW_STORAGE_TTL_SECONDS: int = 1800  # 30 minutes
-
     # Tool calling flow limits
     CHAT_TOOL_MAX_REQUESTS: int = 30
     CHAT_TOOL_MAX_TIME_SECONDS: float = 60.0
