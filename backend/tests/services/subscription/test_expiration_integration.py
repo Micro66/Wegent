@@ -19,7 +19,7 @@ from app.schemas.subscription import (
 class TestSubscriptionExpirationStorage:
     """Tests for expires_at storage in subscription."""
 
-    def test_subscription_with_expires_at_parsed(self, db_session):
+    def test_subscription_with_expires_at_parsed(self, test_db):
         """Test that expires_at from _internal is parsed correctly."""
         from app.services.subscription.service import subscription_service
 
