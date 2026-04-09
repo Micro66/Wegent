@@ -115,6 +115,7 @@
   "validation_prompt_required": "Prompt 模板不能为空",
   "validation_model_required": "所选智能体未配置模型，请选择一个模型",
   "interval_min_error": "间隔时间不能少于 {{min}} 分钟",
+  "expired": "已过期",
   "invalid_schedule": "配置异常",
   "invalid_schedule_tooltip_title": "执行间隔太短",
   "invalid_schedule_tooltip_desc": "当前执行间隔小于最小要求，该订阅器不会自动执行",

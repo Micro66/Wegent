@@ -115,6 +115,7 @@
   "validation_prompt_required": "Prompt template is required",
   "validation_model_required": "The selected agent has no model configured. Please select a model",
   "interval_min_error": "Interval must be at least {{min}} minutes",
+  "expired": "Expired",
   "invalid_schedule": "Invalid Config",
   "invalid_schedule_tooltip_title": "Execution Interval Too Short",
   "invalid_schedule_tooltip_desc": "Current interval is less than the minimum requirement. This subscription will not auto-execute.",

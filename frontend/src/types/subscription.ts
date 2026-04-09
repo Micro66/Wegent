@@ -159,6 +159,7 @@ export interface Subscription {
   trigger_config_error?: string
   // Expiration settings
   expires_at?: string // ISO format datetime
+  is_expired?: boolean // Whether the subscription has expired
   created_at: string
   updated_at: string
 }
