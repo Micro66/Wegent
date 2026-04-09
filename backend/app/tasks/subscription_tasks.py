@@ -751,7 +751,10 @@ def check_due_subscriptions(self):
                     expires_at_str = internal.get("expires_at")
                     if expires_at_str:
                         try:
-                            from app.services.subscription.helpers import is_subscription_expired
+                            from app.services.subscription.helpers import (
+                                is_subscription_expired,
+                            )
+
                             expires_at = datetime.fromisoformat(expires_at_str)
                             if is_subscription_expired(expires_at, now_utc):
                                 # Auto-disable expired subscription
@@ -1633,8 +1636,12 @@ def check_due_subscriptions_sync():
                 expires_at_str = internal.get("expires_at")
                 if expires_at_str:
                     try:
-                        from app.services.subscription.helpers import is_subscription_expired
                         from sqlalchemy.orm.attributes import flag_modified
+
+                        from app.services.subscription.helpers import (
+                            is_subscription_expired,
+                        )
+
                         expires_at = datetime.fromisoformat(expires_at_str)
                         if is_subscription_expired(expires_at, now_utc):
                             # Auto-disable expired subscription
