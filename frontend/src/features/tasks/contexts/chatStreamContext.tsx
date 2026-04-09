@@ -419,6 +419,12 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
    */
   const handleBlockCreated = useCallback((data: ChatBlockCreatedPayload) => {
     const { task_id: taskId, subtask_id, block } = data
+    console.log('[ChatStreamContext][block_created] Received:', {
+      taskId,
+      subtask_id,
+      blockType: block?.type,
+      blockId: block?.id,
+    })
 
     if (!taskId) {
       console.warn('[ChatStreamContext][block_created] Missing task_id for subtask:', subtask_id)
@@ -426,6 +432,7 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
     }
 
     const machine = taskStateManager.get(taskId)
+    console.log('[ChatStreamContext][block_created] machine:', machine ? 'found' : 'not found')
     if (machine) {
       machine.handleChatChunk(
         subtask_id,

@@ -32,7 +32,72 @@ logger = logging.getLogger(__name__)
 
 # Preview storage key prefix
 PREVIEW_KEY_PREFIX = "subscription:preview:"
-PREVIEW_TTL_SECONDS = 300  # 5 minutes
+PREVIEW_TTL_SECONDS = 86400  # 24 hours
+
+
+async def _send_subscription_preview_block(
+    task_id: int,
+    subtask_id: int,
+    preview_data: dict,
+) -> None:
+    """Send subscription preview block to frontend via WebSocket.
+
+    Creates a new independent block (type: subscription_preview) using
+    session_manager.add_block() and emit_block_created, similar to video/image blocks.
+
+    Args:
+        task_id: Task ID for WebSocket room targeting
+        subtask_id: Subtask ID for context
+        preview_data: The preview data to send to frontend
+    """
+    logger.info(
+        f"[SubscriptionMCP] _send_subscription_preview_block called: task_id={task_id}, subtask_id={subtask_id}"
+    )
+    try:
+        from app.services.chat.storage.session import session_manager
+        from app.services.chat.webpage_ws_chat_emitter import get_webpage_ws_emitter
+        from shared.models.blocks import BlockStatus
+
+        # Create independent block (not attached to tool block)
+        block = {
+            "id": preview_data.get("preview_id", f"sub_{uuid.uuid4().hex[:8]}"),
+            "type": "subscription_preview",
+            "status": BlockStatus.PENDING.value,
+            "preview_id": preview_data.get("preview_id"),
+            "execution_id": preview_data.get("execution_id"),
+            "task_id": preview_data.get("task_id"),
+            "subtask_id": preview_data.get("subtask_id"),
+            "config": preview_data.get("config"),
+            "created_at": preview_data.get("created_at"),
+            "timestamp": int(datetime.now().timestamp() * 1000),
+        }
+        logger.info(f"[SubscriptionMCP] Created block: {block}")
+
+        # Add block to session manager (persists to Redis)
+        await session_manager.add_block(subtask_id, block)
+        logger.info(f"[SubscriptionMCP] Added block to session_manager")
+
+        # Send WebSocket event to notify frontend
+        ws_emitter = get_webpage_ws_emitter()
+        if ws_emitter:
+            await ws_emitter.emit_block_created(
+                task_id=task_id,
+                subtask_id=subtask_id,
+                block=block,
+            )
+            logger.info(
+                f"[SubscriptionMCP] Sent subscription_preview block via WebSocket: task_id={task_id}, "
+                f"subtask_id={subtask_id}, preview_id={preview_data.get('preview_id')}"
+            )
+        else:
+            logger.warning(
+                "[SubscriptionMCP] WebSocket emitter not available, block persisted but not notified"
+            )
+    except Exception as e:
+        logger.error(
+            f"[SubscriptionMCP] Failed to send block: {e}",
+            exc_info=True,
+        )
 
 
 def _get_task_info(db: SessionLocal, task_id: int) -> Optional[dict]:
@@ -319,15 +384,15 @@ def _format_preview_table(
     description=(
         "Preview a subscription plan WITHOUT creating it. "
         "Use this tool FIRST when user wants to schedule recurring/periodic tasks. "
-        "Returns a markdown table preview for user confirmation.\n\n"
+        "The frontend will display an interactive preview card with Confirm/Cancel buttons.\n\n"
         "Workflow:\n"
         "1. User: 'remind me every morning' / '每天早上9点提醒我喝水'\n"
-        "2. AI: Call preview_subscription tool\n"
-        "3. AI: Show preview table to user\n"
-        "4. AI: Ask '请确认以上配置是否正确？'\n"
-        "5. User: '执行' / '确认'\n"
-        "6. AI: Call create_subscription with preview_id\n\n"
-        "DO NOT call create_subscription directly. Always use preview first."
+        "2. AI: Call preview_subscription tool to generate preview\n"
+        "3. System: Displays interactive preview card with Confirm/Cancel buttons\n"
+        "4. User confirmation (either one):\n"
+        "   - Clicks 'Confirm' button: Frontend creates automatically, AI does NOTHING more\n"
+        "   - Sends '确认' message: AI must call create_subscription to create the subscription\n\n"
+        "CRITICAL: After calling preview_subscription, wait for user confirmation. NEVER auto-create."
     ),
     server="subscription",
     exclude_params=["token_info"],
@@ -349,7 +414,7 @@ def _format_preview_table(
         "expiration_duration_days": "Days until expiration (1-3650)",
     },
 )
-def preview_subscription(
+async def preview_subscription(
     token_info: TaskTokenInfo,
     display_name: str,
     trigger_type: Literal["cron", "interval", "one_time"],
@@ -366,7 +431,7 @@ def preview_subscription(
     expiration_type: Optional[Literal["fixed_date", "duration_days"]] = None,
     expiration_fixed_date: Optional[str] = None,
     expiration_duration_days: Optional[int] = None,
-) -> str:
+) -> dict:
     """Generate subscription preview without creating it.
 
     Args:
@@ -388,7 +453,8 @@ def preview_subscription(
         expiration_duration_days: Days until expiration
 
     Returns:
-        JSON string with preview_id, execution_id and preview table
+        Dict with __silent_exit__ marker and preview info.
+        The preview is rendered as a block in the frontend.
     """
     # Get task info from database
     db = SessionLocal()
@@ -502,10 +568,66 @@ def preview_subscription(
     }
 
     if not _store_preview_data(preview_id, preview_data):
-        return json.dumps(
-            {"success": False, "error": "Failed to store preview data"},
-            ensure_ascii=False,
-        )
+        return {
+            "success": False,
+            "error": "Failed to store preview data",
+        }
+
+    # Find the tool_use_id from session_manager for WebSocket notification
+    tool_use_id = None
+    try:
+        from app.services.chat.storage.session import session_manager
+
+        blocks = await session_manager.get_blocks(token_info.subtask_id)
+        for block in reversed(blocks):
+            tool_name = block.get("tool_name", "")
+            if block.get("type") == "tool" and "preview_subscription" in tool_name:
+                tool_use_id = block.get("tool_use_id")
+                break
+    except Exception as e:
+        logger.warning(f"[MCP:Subscription] Could not find tool_use_id: {e}")
+
+    # Prepare block data for frontend
+    block_data = {
+        "type": "subscription_preview",
+        "preview_id": preview_id,
+        "execution_id": execution_id,
+        "task_id": token_info.task_id,
+        "subtask_id": token_info.subtask_id,
+        "tool_use_id": tool_use_id,
+        "config": {
+            "display_name": display_name,
+            "description": description,
+            "trigger_type": trigger_type,
+            "trigger_display": _format_trigger_description(
+                trigger_type, trigger_config
+            ),
+            "prompt_preview": (
+                prompt_template[:200] + "..."
+                if len(prompt_template) > 200
+                else prompt_template
+            ),
+            "preserve_history": preserve_history,
+            "history_message_count": history_message_count,
+            "retry_count": retry_count,
+            "timeout_seconds": timeout_seconds,
+            "expires_at": expires_at,
+        },
+        "created_at": datetime.now().isoformat(),
+        "status": "pending",
+    }
+
+    # Send independent subscription_preview block to frontend via WebSocket
+    # This creates a new block (not attached to tool block) similar to video/image blocks
+    await _send_subscription_preview_block(
+        task_id=token_info.task_id,
+        subtask_id=token_info.subtask_id,
+        preview_data=block_data,
+    )
+
+    logger.info(
+        f"[MCP:Subscription] Generated preview {preview_id} with block rendering"
+    )
 
     # Generate preview table
     preview_table = _format_preview_table(
@@ -523,31 +645,35 @@ def preview_subscription(
 
     logger.info(f"[MCP:Subscription] Generated preview {preview_id}")
 
-    return json.dumps(
-        {
-            "success": True,
-            "preview_id": preview_id,
-            "execution_id": execution_id,
-            "preview_table": preview_table,
-            "message": "检测到您需要创建定时任务，请确认以下配置：",
-        },
-        ensure_ascii=False,
-    )
+    # Return preview data that will appear in tool_output
+    # The frontend will detect this and render the subscription preview block
+    return {
+        "__silent_exit__": True,
+        "reason": "subscription_preview block displayed; waiting for user confirmation",
+        "preview_id": preview_id,
+        "execution_id": execution_id,
+        "task_id": token_info.task_id,
+        "subtask_id": token_info.subtask_id,
+        "type": "subscription_preview",
+        "config": block_data["config"],
+        "created_at": block_data["created_at"],
+        "status": "pending",
+    }
 
 
 @mcp_tool(
     name="create_subscription",
     description=(
-        "Create a subscription task after preview and confirmation. "
-        "⚠️ IMPORTANT: This tool REQUIRES a valid preview_id from preview_subscription tool. "
-        "You MUST call preview_subscription first and get user confirmation before calling this tool.\n\n"
+        "Create a subscription task AFTER user has confirmed via message. "
+        "This tool should ONLY be called when user sends a confirmation message (e.g., '确认', '创建') after preview.\n\n"
         "Workflow:\n"
         "1. User: 'remind me every morning'\n"
-        "2. AI: Call preview_subscription tool\n"
-        "3. AI: Show preview table to user\n"
-        "4. AI: Ask for confirmation\n"
-        "5. User: '执行' / '确认'\n"
-        "6. AI: Call create_subscription with preview_id from preview_subscription"
+        "2. AI: Call preview_subscription tool to generate preview\n"
+        "3. System: Displays interactive preview card with Confirm/Cancel buttons\n"
+        "4. User confirmation (either one):\n"
+        "   - Clicks 'Confirm' button in UI: Frontend creates automatically, AI does NOTHING\n"
+        "   - Sends '确认' message: AI must call create_subscription to create the subscription\n\n"
+        "CRITICAL: NEVER auto-call create_subscription after preview. Wait for explicit user confirmation message."
     ),
     server="subscription",
     exclude_params=["token_info"],

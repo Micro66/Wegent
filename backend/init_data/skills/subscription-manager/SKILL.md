@@ -32,11 +32,11 @@ You now have access to subscription management tools. Use them to create schedul
 
 ## Available Tools
 
-### 1. preview_subscription
+### preview_subscription
 
-**ALWAYS call this first** when the user mentions scheduling intent.
+**ALWAYS call this** when the user mentions scheduling intent.
 
-Generates a preview of the subscription configuration **without creating it**. Shows a summary table for user confirmation.
+Generates a preview of the subscription configuration **without creating it**. The preview is displayed as an interactive block card in the UI with "Confirm" and "Cancel" buttons.
 
 **Key Parameters:**
 - `display_name` (string): Human-readable task name
@@ -51,30 +51,29 @@ Generates a preview of the subscription configuration **without creating it**. S
 **Workflow:**
 1. User: "remind me every morning to drink water"
 2. You: Call `preview_subscription` with appropriate parameters
-3. You: Show the returned preview table to the user
-4. You: Ask "请确认以上配置是否正确？回复「执行」创建任务，或告诉我需要修改的内容。"
-5. User: "执行" / "确认"
-6. You: Call `create_subscription` with the `preview_id`
+3. System: Displays an interactive preview block card in the chat with Confirm/Cancel buttons
+4. User action (either one):
+   - **Clicks "Confirm" button**: Frontend handles creation automatically - you do NOT need to do anything
+   - **Sends "确认" message**: You must call `create_subscription` with the same parameters to create the subscription
+5. System: Subscription created
 
-### 2. create_subscription
-
-**ONLY call this after** the user confirms the preview.
-
-Creates the actual subscription task. Requires `preview_id` from `preview_subscription`.
-
-**Required Parameters:**
-- `display_name` (string): Task name
-- `trigger_type` (string): Same as preview
-- `prompt_template` (string): Same as preview
-- `preview_id` (string): **REQUIRED** - from `preview_subscription` response
+**IMPORTANT:**
+- The tool returns immediately with a silent exit marker
+- The preview block is rendered by the frontend, NOT by you
+- **DO NOT** display any markdown table or text preview yourself
+- **DO NOT** ask user to reply "执行" or "确认"
+- After calling preview_subscription, output this exact message: "点击确认按钮或发送\"确认\"消息，来创建订阅任务"
+- If user sends "确认" or similar confirmation message, call `create_subscription` with the same parameters
 
 ## Important Rules
 
-1. **NEVER call `create_subscription` directly** - always use `preview_subscription` first
-2. **When time is vague** (e.g., "every morning"), offer 2-3 specific time options
-3. **Use `preserve_history: true`** for tasks needing context continuity (daily reports, monitoring)
-4. **Use `preserve_history: false`** for independent tasks (reminders, checks)
-5. **Name generation**: Create concise, readable names based on task content
+1. **🚫 NEVER auto-create subscription** - After calling `preview_subscription`, you must wait for user to click the "Confirm" button in the preview card or explicitly send a confirmation message. Do NOT auto-create the subscription after preview.
+2. **ONLY call `create_subscription` when user explicitly confirms via message** - If user sends "确认" or "创建" after preview, then call `create_subscription` with the same parameters to actually create the subscription. If user clicks the Confirm button in UI, frontend handles creation automatically - you do NOT need to call `create_subscription`.
+3. **When time is vague** (e.g., "every morning"), offer 2-3 specific time options
+4. **Use `preserve_history: true`** for tasks needing context continuity (daily reports, monitoring)
+5. **Use `preserve_history: false`** for independent tasks (reminders, checks)
+6. **Name generation**: Create concise, readable names based on task content
+7. **After calling preview_subscription**: Output the message "点击确认按钮或发送\"确认\"消息，来创建订阅任务" then stop and wait for user confirmation
 
 ## Examples
 
@@ -147,25 +146,15 @@ preview_subscription(
 **preview_subscription returns:**
 ```json
 {
-  "success": true,
+  "__silent_exit__": true,
+  "reason": "subscription_preview block displayed; waiting for user confirmation",
   "preview_id": "preview_abc123",
-  "execution_id": "exec_xyz789",
-  "preview_table": "markdown table showing configuration",
-  "message": "检测到您需要创建定时任务，请确认以下配置："
+  "execution_id": "exec_xyz789"
 }
 ```
 
-**create_subscription returns:**
-```json
-{
-  "success": true,
-  "subscription": {
-    "id": 123,
-    "name": "sub-daily-water-abc123",
-    "display_name": "Daily Morning Water Reminder",
-    "trigger_type": "cron",
-    "next_execution_time": "2025-04-10T09:00:00"
-  },
-  "message": "订阅任务创建成功！将于 2025-04-10 09:00:00 首次执行。"
-}
-```
+The frontend will display an interactive preview block card with Confirm/Cancel buttons.
+
+**User confirmation handling:**
+- If user clicks "Confirm" button in the UI: Frontend automatically creates the subscription - you do NOT need to call any other tool
+- If user sends confirmation message (e.g., "确认", "创建"): You must call `create_subscription` with the same parameters to create the subscription

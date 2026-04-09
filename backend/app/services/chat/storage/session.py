@@ -782,6 +782,42 @@ class SessionManager:
                 f"[SessionManager] Failed to update tool block status for subtask {subtask_id}: {e}"
             )
 
+    async def add_block(self, subtask_id: int, block: Dict[str, Any]) -> None:
+        """Add a generic block to the subtask.
+
+        This is used for custom block types like subscription_preview, video, image, etc.
+        Uses Redis RPUSH for O(1) block addition.
+
+        Args:
+            subtask_id: Subtask ID
+            block: Block data dict with at least 'id', 'type', and other type-specific fields
+        """
+        try:
+            # Finalize current text block before adding new block (to maintain order)
+            await self._finalize_current_text_block(subtask_id)
+
+            # Ensure block has required fields
+            if "timestamp" not in block:
+                block["timestamp"] = int(asyncio.get_event_loop().time() * 1000)
+
+            # Use RPUSH to append block to list (O(1) operation)
+            blocks_key = self._get_blocks_key(subtask_id)
+            redis_client = await self._cache._get_client()
+            try:
+                await redis_client.rpush(blocks_key, json.dumps(block))
+                await redis_client.expire(blocks_key, STREAMING_TTL)
+            finally:
+                await redis_client.aclose()
+
+            logger.info(
+                f"[SessionManager] Added block for subtask {subtask_id}: "
+                f"id={block.get('id')}, type={block.get('type')}"
+            )
+        except Exception as e:
+            logger.error(
+                f"[SessionManager] Failed to add block for subtask {subtask_id}: {e}"
+            )
+
     async def add_text_content(self, subtask_id: int, content: str) -> None:
         """Add text content to the current text block.
 
