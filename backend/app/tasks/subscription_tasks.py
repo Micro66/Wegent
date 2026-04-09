@@ -970,15 +970,28 @@ def _recover_stale_pending_executions(db: Session) -> int:
         )
 
         # Use FOR UPDATE SKIP LOCKED to prevent race conditions
-        stale_executions = (
-            db.query(BackgroundExecution)
+        # Two-step query to avoid deadlock with status index:
+        # 1. First, query IDs without locking (avoids gap locks on status index)
+        # 2. Then, query by primary key with SKIP LOCKED (uses clustered index only)
+        stale_ids = (
+            db.query(BackgroundExecution.id)
             .filter(
                 BackgroundExecution.status == BackgroundExecutionStatus.PENDING.value,
                 BackgroundExecution.created_at < stale_threshold,
                 BackgroundExecution.task_id == 0,  # Never linked to a task
             )
-            .with_for_update(skip_locked=True)
             .limit(50)
+            .all()
+        )
+
+        if not stale_ids:
+            return 0
+
+        # Query by primary key with SKIP LOCKED to avoid deadlocks on status index
+        stale_executions = (
+            db.query(BackgroundExecution)
+            .filter(BackgroundExecution.id.in_([id for id, in stale_ids]))
+            .with_for_update(skip_locked=True)
             .all()
         )
 
