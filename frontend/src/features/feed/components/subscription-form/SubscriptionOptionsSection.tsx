@@ -431,6 +431,7 @@ export function SubscriptionOptionsSection({
                 handleRepoChange={handleRepoChange}
                 disabled={false}
                 fullWidth={true}
+                autoRestore={false}
               />
             </div>
           </div>
