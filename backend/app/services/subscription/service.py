@@ -221,24 +221,30 @@ class SubscriptionService:
             subscription_in.trigger_config,
         )
 
-        # Validate subscription name uniqueness
-        existing = (
-            db.query(Kind)
-            .filter(
-                Kind.user_id == user_id,
-                Kind.kind == "Subscription",
-                Kind.name == subscription_in.name,
-                Kind.namespace == subscription_in.namespace,
-                Kind.is_active == True,
+        # Auto-generate name if not provided, otherwise validate uniqueness
+        if subscription_in.name is None:
+            subscription_in.name = generate_unique_subscription_name(
+                db, user_id, subscription_in.namespace
             )
-            .first()
-        )
+        else:
+            # Validate subscription name uniqueness for user-provided names
+            existing = (
+                db.query(Kind)
+                .filter(
+                    Kind.user_id == user_id,
+                    Kind.kind == "Subscription",
+                    Kind.name == subscription_in.name,
+                    Kind.namespace == subscription_in.namespace,
+                    Kind.is_active == True,
+                )
+                .first()
+            )
 
-        if existing:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Subscription with name '{subscription_in.name}' already exists",
-            )
+            if existing:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Subscription with name '{subscription_in.name}' already exists",
+                )
 
         # Validate team exists
         team = (
