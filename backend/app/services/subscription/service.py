@@ -10,8 +10,8 @@ on Subscription resources stored in the kinds table.
 """
 
 import logging
-import string
 import secrets
+import string
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -82,7 +82,7 @@ def generate_unique_subscription_name(
 
     for attempt in range(max_retries):
         # Generate random 8-character suffix
-        suffix = ''.join(secrets.choice(alphabet) for _ in range(8))
+        suffix = "".join(secrets.choice(alphabet) for _ in range(8))
         name = f"sub-{suffix}"
 
         # Check if name already exists
