@@ -246,13 +246,11 @@ class BackgroundExecutionManager:
                 loop = asyncio.get_running_loop()
                 # Schedule as background task
                 asyncio.create_task(
-                    self._cancel_associated_task_async(db, execution.task_id, user_id)
+                    self.cancel_task_by_id(db, execution.task_id, user_id)
                 )
             except RuntimeError:
                 # No event loop running, use asyncio.run
-                asyncio.run(
-                    self._cancel_associated_task_async(db, execution.task_id, user_id)
-                )
+                asyncio.run(self.cancel_task_by_id(db, execution.task_id, user_id))
 
         # Emit WebSocket event
         emit_background_execution_update(
@@ -317,29 +315,9 @@ class BackgroundExecutionManager:
         Returns:
             True if cancellation was successful, False otherwise
         """
-        return await self._do_cancel_task(db, task_id, user_id)
+        return await self._cancel_task_internal(db, task_id, user_id)
 
-    async def _cancel_associated_task_async(
-        self,
-        db: Session,
-        task_id: int,
-        user_id: int,
-    ) -> None:
-        """Cancel the associated Task and its Subtasks when execution is cancelled.
-
-        This method ensures that when a subscription execution is cancelled:
-        1. The associated Task status is updated to CANCELLED
-        2. Running Subtasks are properly cancelled
-        3. The executor is notified to stop the actual execution
-
-        Args:
-            db: Database session
-            task_id: ID of the task to cancel
-            user_id: ID of the user requesting cancellation
-        """
-        await self._do_cancel_task(db, task_id, user_id)
-
-    async def _do_cancel_task(
+    async def _cancel_task_internal(
         self,
         db: Session,
         task_id: int,
