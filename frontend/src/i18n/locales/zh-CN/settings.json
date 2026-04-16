@@ -76,6 +76,41 @@
     "request_permission": "申请权限",
     "go_to_market": "去市场看看"
   },
+  "im_bindings": {
+    "title": "IM 频道绑定",
+    "description": "管理 IM 频道与智能体的绑定关系",
+    "load_failed": "加载 IM 绑定失败",
+    "no_channels": "没有可用的 IM 频道",
+    "private_agent": "私聊智能体",
+    "bound_groups": "已绑定群组",
+    "use_channel_default": "使用频道默认",
+    "select_team": "选择智能体",
+    "default_team": "频道默认",
+    "unknown_team": "未知智能体",
+    "using_team": "使用: {{team}}",
+    "no_group_bindings": "暂无群组绑定",
+    "private_team_updated": "私聊智能体已更新",
+    "update_failed": "更新失败",
+    "group_removed": "群组绑定已移除",
+    "remove_failed": "移除失败",
+    "start_session_failed": "启动绑定会话失败",
+    "binding_failed": "绑定失败",
+    "bind_dialog": {
+      "title": "绑定新群组",
+      "description": "将 IM 群组与智能体绑定",
+      "initial_instruction": "将机器人添加到群组并 @提及机器人发送消息，然后点击开始绑定按钮。",
+      "start_button": "开始绑定",
+      "starting": "启动中...",
+      "waiting_message": "等待群组消息...",
+      "cancel_button": "取消",
+      "discovered_group": "发现群组",
+      "select_team_label": "选择要使用的智能体",
+      "confirm_button": "确认绑定",
+      "confirming": "绑定中...",
+      "success_title": "绑定成功！",
+      "success_message": "群组已成功绑定到智能体"
+    }
+  },
   "bot": {
     "allowed_models": {
       "label": "限制可用模型",

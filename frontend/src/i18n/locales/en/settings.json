@@ -76,6 +76,41 @@
     "request_permission": "Request Permission",
     "go_to_market": "Go to Market"
   },
+  "im_bindings": {
+    "title": "IM Channel Bindings",
+    "description": "Manage IM channel and agent binding relationships",
+    "load_failed": "Failed to load IM bindings",
+    "no_channels": "No IM channels available",
+    "private_agent": "Private Agent",
+    "bound_groups": "Bound Groups",
+    "use_channel_default": "Use channel default",
+    "select_team": "Select agent",
+    "default_team": "Channel default",
+    "unknown_team": "Unknown agent",
+    "using_team": "Using: {{team}}",
+    "no_group_bindings": "No group bindings",
+    "private_team_updated": "Private agent updated",
+    "update_failed": "Update failed",
+    "group_removed": "Group binding removed",
+    "remove_failed": "Remove failed",
+    "start_session_failed": "Failed to start binding session",
+    "binding_failed": "Binding failed",
+    "bind_dialog": {
+      "title": "Bind New Group",
+      "description": "Bind an IM group to an agent",
+      "initial_instruction": "Add the bot to a group and @mention the bot to send a message, then click the Start Binding button.",
+      "start_button": "Start Binding",
+      "starting": "Starting...",
+      "waiting_message": "Waiting for group message...",
+      "cancel_button": "Cancel",
+      "discovered_group": "Discovered Group",
+      "select_team_label": "Select agent to use",
+      "confirm_button": "Confirm Binding",
+      "confirming": "Binding...",
+      "success_title": "Binding Successful!",
+      "success_message": "Group successfully bound to agent"
+    }
+  },
   "bot": {
     "allowed_models": {
       "label": "Restrict Available Models",
