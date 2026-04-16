@@ -91,10 +91,31 @@ class DingTalkChannelHandler(BaseChannelHandler[ChatbotMessage, DingTalkCallback
         self._use_ai_card = use_ai_card
         # Store incoming_message for reply operations
         self._current_incoming_message: Optional[ChatbotMessage] = None
+        # Store resolved team for binding support
+        self._resolved_team: Optional[Any] = None
 
     def set_dingtalk_client(self, client: "DingTalkStreamClient") -> None:
         """Set the DingTalk client (can be set after initialization)."""
         self._dingtalk_client = client
+
+    def _get_default_team(self, db: Session, user_id: int) -> Optional[Any]:
+        """Get the default team, using resolved team from binding if available.
+
+        This override allows the binding service to determine which team
+        should handle the message based on conversation context.
+
+        Args:
+            db: Database session
+            user_id: User ID
+
+        Returns:
+            Team Kind object or None
+        """
+        # Use resolved team from binding if available
+        if self._resolved_team is not None:
+            return self._resolved_team
+        # Fall back to parent implementation
+        return super()._get_default_team(db, user_id)
 
     def parse_message(self, raw_data: Any) -> MessageContext:
         """Parse DingTalk ChatbotMessage into generic MessageContext.
@@ -684,6 +705,22 @@ class WegentChatbotHandler(dingtalk_stream.ChatbotHandler):
                             self._channel_id,
                             binding_result,
                         )
+
+                        # Resolve team using binding service with conversation context
+                        # This enables group chat binding - different teams for different groups
+                        resolved_team = self._channel_handler._resolve_team_for_message(
+                            db=db,
+                            user_id=user.id,
+                            message_context=message_context,
+                        )
+                        if resolved_team:
+                            self.logger.info(
+                                "[DingTalkHandler] Resolved team from binding: team_id=%s, conversation_id=%s",
+                                resolved_team.id,
+                                message_context.conversation_id,
+                            )
+                        # Store resolved team for use by _get_default_team
+                        self._channel_handler._resolved_team = resolved_team
                     except Exception as e:
                         self.logger.exception(
                             "[DingTalkHandler] Failed during IM binding update/check"
@@ -695,3 +732,5 @@ class WegentChatbotHandler(dingtalk_stream.ChatbotHandler):
         finally:
             # Restore original method
             self._channel_handler.send_text_reply = original_send_reply
+            # Clear resolved team to avoid stale data between messages
+            self._channel_handler._resolved_team = None
