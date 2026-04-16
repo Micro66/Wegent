@@ -34,8 +34,10 @@ import type {
   NotificationLevel,
   NotificationWebhook,
   Subscription,
+  SubscriptionBindingUpdatePayload,
   SubscriptionCreateRequest,
   SubscriptionExecutionTarget,
+  SubscriptionGroupInfoPayload,
   SubscriptionKnowledgeBaseRef,
   SubscriptionSkillRef,
   SubscriptionTaskType,
@@ -45,6 +47,7 @@ import type {
 } from '@/types/subscription'
 import { toast } from 'sonner'
 import { getCompatibleProviderFromAgentType } from '@/utils/modelCompatibility'
+import { useSocket } from '@/contexts/SocketContext'
 import {
   SendAreaSection,
   BasicInfoSection,
@@ -277,6 +280,7 @@ export function SubscriptionForm({
   initialData,
 }: SubscriptionFormProps) {
   const { t } = useTranslation('feed')
+  const { socket } = useSocket()
   const isEditing = !!subscription
   const isRental = subscription?.is_rental ?? false
 
@@ -347,6 +351,7 @@ export function SubscriptionForm({
   const [channelBindingConfigs, setChannelBindingConfigs] = useState<
     NotificationChannelBindingConfig[]
   >([])
+  const [bindingWaitingState, setBindingWaitingState] = useState<Record<number, boolean>>({})
   const [devSettingsLoading, setDevSettingsLoading] = useState(false)
 
   // Notification webhooks state
@@ -886,6 +891,76 @@ export function SubscriptionForm({
     durationDays,
   ])
 
+  const startBindingSession = useCallback(
+    async (channelId: number, bindPrivate: boolean, bindGroup: boolean) => {
+      await subscriptionApis.startDeveloperBindingSession(subscription?.id || null, {
+        channel_id: channelId,
+        bind_private: bindPrivate,
+        bind_group: bindGroup,
+      })
+      setBindingWaitingState(prev => ({ ...prev, [channelId]: true }))
+    },
+    [subscription?.id]
+  )
+
+  const cancelBindingSession = useCallback(
+    async (channelId: number) => {
+      await subscriptionApis.cancelDeveloperBindingSession(subscription?.id || null, {
+        channel_id: channelId,
+      })
+      setBindingWaitingState(prev => ({ ...prev, [channelId]: false }))
+    },
+    [subscription?.id]
+  )
+
+  // Listen for group info received event from WebSocket
+  useEffect(() => {
+    if (!socket) return
+
+    const bindingUpdateHandler = (payload: SubscriptionBindingUpdatePayload) => {
+      setDevAvailableChannels(prev =>
+        prev.map(channel =>
+          channel.id === payload.channel_id && payload.private_bound
+            ? {
+                ...channel,
+                is_bound: true,
+              }
+            : channel
+        )
+      )
+
+      if (payload.completed && !payload.group_bound) {
+        setBindingWaitingState(prev => ({ ...prev, [payload.channel_id]: false }))
+      }
+    }
+
+    const handler = (payload: SubscriptionGroupInfoPayload) => {
+      // Update channelBindingConfigs with group info
+      setChannelBindingConfigs(prev =>
+        prev.map(item =>
+          item.channel_id === payload.channel_id
+            ? {
+                ...item,
+                group_conversation_id: payload.group_conversation_id,
+                group_name: payload.group_name,
+              }
+            : item
+        )
+      )
+      // Update binding waiting state
+      setBindingWaitingState(prev => ({ ...prev, [payload.channel_id]: false }))
+      // Show success toast
+      toast.success(t('notification_settings.binding_success'))
+    }
+
+    socket.on('subscription:group_binding_updated', bindingUpdateHandler)
+    socket.on('subscription:group_info_received', handler)
+    return () => {
+      socket.off('subscription:group_binding_updated', bindingUpdateHandler)
+      socket.off('subscription:group_info_received', handler)
+    }
+  }, [socket, t])
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
@@ -1010,6 +1085,9 @@ export function SubscriptionForm({
               setNotificationWebhooks={setNotificationWebhooks}
               channelBindingConfigs={channelBindingConfigs}
               setChannelBindingConfigs={setChannelBindingConfigs}
+              onStartBinding={startBindingSession}
+              onCancelBinding={cancelBindingSession}
+              bindingWaitingState={bindingWaitingState}
             />
           )}
         </div>
