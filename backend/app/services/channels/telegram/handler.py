@@ -84,10 +84,31 @@ class TelegramChannelHandler(BaseChannelHandler["Update", TelegramCallbackInfo])
         # Store current message context for reply operations
         self._current_chat_id: Optional[int] = None
         self._current_message_id: Optional[int] = None
+        # Store resolved team for binding support
+        self._resolved_team: Optional[Any] = None
 
     def set_bot(self, bot: "Bot") -> None:
         """Set the Telegram bot (can be set after initialization)."""
         self._bot = bot
+
+    def _get_default_team(self, db: Session, user_id: int) -> Optional[Any]:
+        """Get the default team, using resolved team from binding if available.
+
+        This override allows the binding service to determine which team
+        should handle the message based on conversation context.
+
+        Args:
+            db: Database session
+            user_id: User ID
+
+        Returns:
+            Team Kind object or None
+        """
+        # Use resolved team from binding if available
+        if self._resolved_team is not None:
+            return self._resolved_team
+        # Fall back to parent implementation
+        return super()._get_default_team(db, user_id)
 
     def parse_message(self, raw_data: Any) -> MessageContext:
         """Parse Telegram Update into generic MessageContext.

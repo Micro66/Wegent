@@ -264,3 +264,42 @@ class TestTelegramChannelHandler:
         emitter = await handler.create_streaming_emitter(mock_context)
 
         assert emitter is None
+
+    def test_resolved_team_attribute(self, handler):
+        """Test that _resolved_team attribute exists and defaults to None."""
+        assert hasattr(handler, "_resolved_team")
+        assert handler._resolved_team is None
+
+    def test_get_default_team_with_resolved_team(self, handler):
+        """Test _get_default_team uses _resolved_team when available."""
+        mock_db = MagicMock()
+        mock_team = MagicMock()
+        mock_team.id = 999
+
+        # Set resolved team
+        handler._resolved_team = mock_team
+
+        # Should return resolved team without querying database
+        result = handler._get_default_team(mock_db, 1)
+
+        assert result == mock_team
+
+    def test_get_default_team_fallback_to_parent(self, handler):
+        """Test _get_default_team falls back to parent when _resolved_team is None."""
+        mock_db = MagicMock()
+
+        # Ensure resolved team is None
+        handler._resolved_team = None
+
+        # Mock the parent class method
+        mock_team = MagicMock()
+        mock_team.id = 100
+
+        with patch.object(
+            handler.__class__.__bases__[0], "_get_default_team", return_value=mock_team
+        ) as mock_parent:
+            result = handler._get_default_team(mock_db, 1)
+
+            # Verify parent was called
+            mock_parent.assert_called_once_with(mock_db, 1)
+            assert result == mock_team

@@ -663,8 +663,40 @@ class TelegramChannelProvider(BaseChannelProvider):
             len(update.message.text) if update.message.text else 0,
         )
 
-        # Process through the channel handler
-        await self._handler.handle_message(update)
+        # Parse message to get context for binding resolution
+        message_context = self._handler.parse_message(update)
+
+        # Resolve user and team with binding support
+        db = SessionLocal()
+        try:
+            user = await self._handler.resolve_user(db, message_context)
+            if user and self._channel_id:
+                # Resolve team using binding service with conversation context
+                # This enables group chat binding - different teams for different groups
+                resolved_team = self._handler._resolve_team_for_message(
+                    db=db,
+                    user_id=user.id,
+                    message_context=message_context,
+                )
+                if resolved_team:
+                    logger.info(
+                        "[Telegram] Resolved team from binding: team_id=%s, conversation_id=%s",
+                        resolved_team.id,
+                        message_context.conversation_id,
+                    )
+                # Store resolved team for use by _get_default_team
+                self._handler._resolved_team = resolved_team
+        except Exception as e:
+            logger.exception(f"[Telegram] Failed to resolve user or team binding: {e}")
+        finally:
+            db.close()
+
+        try:
+            # Process through the channel handler
+            await self._handler.handle_message(update)
+        finally:
+            # Clear resolved team to avoid stale data between messages
+            self._handler._resolved_team = None
 
     async def _handle_error(
         self, update: object, context: ContextTypes.DEFAULT_TYPE
