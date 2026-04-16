@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import json
-from typing import Optional
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
@@ -20,8 +20,13 @@ from app.schemas.admin import (
     QuickAccessTeam,
     WelcomeConfigResponse,
 )
+from app.schemas.im_channel import (
+    IMChannelUserBinding,
+    UpdateIMBindingRequest,
+)
 from app.schemas.subscription import NotificationChannelInfo
 from app.schemas.user import UserCreate, UserInDB, UserUpdate
+from app.services.channels import binding_service
 from app.services.kind import kind_service
 from app.services.mcp_provider_registry import (
     get_mcp_provider,
@@ -669,3 +674,107 @@ async def get_user_available_channels(
     for new subscription creation scenarios.
     """
     return subscription_notification_service.get_available_channels(db, current_user.id)
+
+
+# ==================== IM Channel User Bindings ====================
+
+
+@router.get("/me/im-bindings", response_model=List[IMChannelUserBinding])
+async def get_my_im_bindings(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Get all IM channel bindings for the current user.
+
+    Returns a list of per-channel binding configurations including
+    private team bindings and group conversation bindings.
+    """
+    return binding_service.get_user_bindings(db, current_user.id)
+
+
+@router.put("/me/im-bindings/{channel_id}", response_model=IMChannelUserBinding)
+async def update_my_im_binding(
+    channel_id: int,
+    req: UpdateIMBindingRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Update IM channel binding for the current user.
+
+    Can update private team binding (private_team_id) or add/update
+    a group binding. To remove a private team binding, set private_team_id to null.
+    """
+    result = binding_service.update_binding(db, current_user.id, channel_id, req)
+    if result is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User or channel not found",
+        )
+    return result
+
+
+@router.delete(
+    "/me/im-bindings/{channel_id}/groups/{conversation_id}",
+    response_model=IMChannelUserBinding,
+)
+async def delete_my_group_binding(
+    channel_id: int,
+    conversation_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Remove a group binding for the current user.
+
+    Deletes the binding between a group conversation and a team.
+    """
+    result = binding_service.remove_group_binding(
+        db, current_user.id, channel_id, conversation_id
+    )
+    if result is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Binding not found",
+        )
+    return result
+
+
+@router.post("/me/im-bindings/{channel_id}/start-session")
+async def start_im_binding_session(
+    channel_id: int,
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Start a binding discovery session for the current user.
+
+    Creates a pending session with 10-minute TTL. During this period,
+    sending a message from a group chat will bind that group to the selected team.
+    """
+    success = await binding_service.start_binding_session(current_user.id, channel_id)
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to start binding session",
+        )
+    return {"success": True, "message": "Binding session started"}
+
+
+@router.post("/me/im-bindings/{channel_id}/cancel-session")
+async def cancel_im_binding_session(
+    channel_id: int,
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Cancel a binding discovery session for the current user.
+
+    Removes the pending binding session if one exists.
+    """
+    success = await binding_service.cancel_binding_session(current_user.id, channel_id)
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to cancel binding session",
+        )
+    return {"success": True, "message": "Binding session cancelled"}

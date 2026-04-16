@@ -75,7 +75,7 @@ def sample_channel():
     channel.id = 1
     channel.name = "Test DingTalk Channel"
     channel.kind = "Messager"
-    channel.spec = json.dumps({"channelType": "dingtalk"})
+    channel.json = json.dumps({"channelType": "dingtalk"})
     return channel
 
 

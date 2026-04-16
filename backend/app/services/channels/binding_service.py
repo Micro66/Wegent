@@ -212,9 +212,9 @@ class IMChannelBindingService:
 
             try:
                 spec = (
-                    json.loads(channel.spec)
-                    if isinstance(channel.spec, str)
-                    else channel.spec
+                    json.loads(channel.json)
+                    if isinstance(channel.json, str)
+                    else channel.json
                 )
                 channel_type = spec.get("channelType", "")
             except (json.JSONDecodeError, TypeError):
