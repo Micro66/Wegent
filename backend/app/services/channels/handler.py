@@ -27,6 +27,7 @@ from app.core.config import settings
 from app.db.session import SessionLocal
 from app.models.kind import Kind
 from app.models.user import User
+from app.services.channels.binding_service import binding_service
 from app.services.channels.callback import (
     BaseCallbackInfo,
     BaseChannelCallbackService,
@@ -429,6 +430,48 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             return self._get_default_team(db, user_id)
 
         return team
+
+    def _resolve_team_for_message(
+        self, db: Session, user_id: int, message_context: MessageContext
+    ) -> Optional[Kind]:
+        """Resolve team with safe fallback to channel default.
+
+        Tries to resolve team from user binding service first.
+        Falls back to channel default team on any error.
+
+        Args:
+            db: Database session
+            user_id: User ID
+            message_context: Message context with conversation_type and conversation_id
+
+        Returns:
+            Team Kind object or None
+        """
+        try:
+            team_id = binding_service.resolve_team_for_message(
+                db, user_id, self._channel_id, message_context
+            )
+            if team_id:
+                team = (
+                    db.query(Kind)
+                    .filter(
+                        Kind.id == team_id, Kind.kind == "Team", Kind.is_active == True
+                    )
+                    .first()
+                )
+                if team:
+                    self.logger.info(
+                        f"[{self._channel_type.value}Handler] Resolved team from binding: "
+                        f"team_id={team_id}, user_id={user_id}, channel_id={self._channel_id}"
+                    )
+                    return team
+        except Exception as e:
+            self.logger.warning(
+                f"[{self._channel_type.value}Handler] Failed to resolve user binding: {e}"
+            )
+
+        # Fallback to channel default
+        return self._get_default_team(db, user_id)
 
     async def _get_user_model_override(
         self, user_id: int
