@@ -6,38 +6,22 @@
 
 /**
  * Notification Section - Notification level, channels, and webhooks
+ * Simplified version: binding management moved to /settings/integrations
  */
 
-import { Bell } from 'lucide-react'
-import { useMemo, useState, useEffect, useCallback } from 'react'
+import { Bell, ExternalLink } from 'lucide-react'
+import { useMemo, useCallback } from 'react'
+import { useRouter } from 'next/navigation'
 
 import { CollapsibleSection } from '@/components/common/CollapsibleSection'
 import { Label } from '@/components/ui/label'
-import { fetchRuntimeConfig, DEFAULT_BIND_GROUP_STEPS } from '@/lib/runtime-config'
+import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { NotificationChannelBindingConfig, NotificationLevel } from '@/types/subscription'
 import type { NotificationSectionProps } from './types'
-import { BindingProgressDialog } from './BindingProgressDialog'
-import { ChannelBindingPanel } from './notification-section/ChannelBindingPanel'
 import { NotificationChannelCard } from './notification-section/NotificationChannelCard'
 import { NotificationLevelSelector } from './notification-section/NotificationLevelSelector'
 import { WebhookListEditor } from './notification-section/WebhookListEditor'
-
-interface BindGroupStep {
-  title: string
-  hint?: string
-}
-
-interface BindGroupConfig {
-  variables?: Record<string, string>
-  steps: BindGroupStep[]
-}
-
-const defaultBindConfig: BindGroupConfig = JSON.parse(DEFAULT_BIND_GROUP_STEPS)
-
-const replaceVariables = (text: string, variables: Record<string, string>): string => {
-  return text.replace(/\{\{(\w+)\}\}/g, (_, key) => variables[key] || `{{${key}}}`)
-}
 
 const levelOptionFallbacks: Record<NotificationLevel, { label: string; description: string }> = {
   silent: {
@@ -54,6 +38,9 @@ const levelOptionFallbacks: Record<NotificationLevel, { label: string; descripti
   },
 }
 
+// Paths to settings page
+const SETTINGS_PATH = '/settings?section=integrations&tab=integrations'
+
 export function NotificationSection({
   devNotificationLevel,
   setDevNotificationLevel,
@@ -65,66 +52,9 @@ export function NotificationSection({
   setNotificationWebhooks,
   channelBindingConfigs,
   setChannelBindingConfigs,
-  onStartBinding,
-  onCancelBinding,
-  bindingWaitingState,
 }: NotificationSectionProps) {
   const { t } = useTranslation('feed')
-  const [privateBindingDialogChannel, setPrivateBindingDialogChannel] = useState<number | null>(
-    null
-  )
-  const [privateBindingState, setPrivateBindingState] = useState<'idle' | 'waiting' | 'success'>(
-    'idle'
-  )
-  const [boundPrivateName, setBoundPrivateName] = useState<string>('')
-  const [groupBindingDialogChannel, setGroupBindingDialogChannel] = useState<number | null>(null)
-  const [groupBindingState, setGroupBindingState] = useState<'idle' | 'waiting' | 'success'>('idle')
-  const [boundGroupName, setBoundGroupName] = useState<string>('')
-  const [bindConfig, setBindConfig] = useState<BindGroupConfig>(defaultBindConfig)
-
-  useEffect(() => {
-    const publicConfig = process.env.NEXT_PUBLIC_BIND_GROUP_STEPS
-    if (publicConfig) {
-      try {
-        const parsed = JSON.parse(publicConfig) as BindGroupConfig
-        if (parsed.steps && parsed.steps.length >= 3) {
-          setBindConfig({
-            variables: { ...defaultBindConfig.variables, ...parsed.variables },
-            steps: parsed.steps,
-          })
-          return
-        }
-      } catch {
-        // Fall through to runtime config.
-      }
-    }
-
-    fetchRuntimeConfig()
-      .then(config => {
-        if (config.bindGroupSteps) {
-          try {
-            const parsed = JSON.parse(config.bindGroupSteps) as BindGroupConfig
-            if (parsed.steps && parsed.steps.length >= 3) {
-              setBindConfig({
-                variables: { ...defaultBindConfig.variables, ...parsed.variables },
-                steps: parsed.steps,
-              })
-            }
-          } catch {
-            // Keep default binding config.
-          }
-        }
-      })
-      .catch(() => {
-        // Keep default binding config.
-      })
-  }, [])
-
-  const selectedDingtalkChannels = useMemo(() => {
-    return devAvailableChannels.filter(
-      channel => channel.channel_type === 'dingtalk' && devNotificationChannels.includes(channel.id)
-    )
-  }, [devAvailableChannels, devNotificationChannels])
+  const router = useRouter()
 
   const levelOptions = useMemo(
     () =>
@@ -151,119 +81,54 @@ export function NotificationSection({
     [channelBindingConfigs]
   )
 
-  const getChannelName = useCallback(
-    (channelId: number) => devAvailableChannels.find(item => item.id === channelId)?.name || '',
+  const getPrivateBound = useCallback(
+    (channelId: number) => {
+      const channel = devAvailableChannels.find(item => item.id === channelId)
+      return Boolean(channel?.is_bound)
+    },
     [devAvailableChannels]
   )
 
-  useEffect(() => {
-    if (privateBindingDialogChannel && privateBindingState === 'waiting') {
-      const channel = devAvailableChannels.find(item => item.id === privateBindingDialogChannel)
-      if (channel?.is_bound) {
-        setBoundPrivateName(getChannelName(privateBindingDialogChannel))
-        setPrivateBindingState('success')
-        const timeoutId = window.setTimeout(() => {
-          setPrivateBindingDialogChannel(null)
-          setPrivateBindingState('idle')
-        }, 1500)
+  const getGroupBound = useCallback(
+    (channelId: number) => {
+      const config = getBindingConfig(channelId)
+      return Boolean(config.group_conversation_id)
+    },
+    [getBindingConfig]
+  )
 
-        return () => {
-          window.clearTimeout(timeoutId)
+  const navigateToSettings = useCallback(() => {
+    router.push(SETTINGS_PATH)
+  }, [router])
+
+  const updateBindingConfig = useCallback(
+    (
+      channelId: number,
+      updater: (prev: { bind_private: boolean; bind_group: boolean }) => {
+        bind_private: boolean
+        bind_group: boolean
+      }
+    ) => {
+      setChannelBindingConfigs((prev: NotificationChannelBindingConfig[]) => {
+        const existing = prev.find(
+          (cfg: NotificationChannelBindingConfig) => cfg.channel_id === channelId
+        ) ?? {
+          channel_id: channelId,
+          bind_private: true,
+          bind_group: false,
         }
-      }
-    }
-  }, [privateBindingDialogChannel, privateBindingState, getChannelName, devAvailableChannels])
-
-  useEffect(() => {
-    if (groupBindingDialogChannel && groupBindingState === 'waiting') {
-      const config = getBindingConfig(groupBindingDialogChannel)
-      if (config.group_conversation_id) {
-        setBoundGroupName(config.group_name || '')
-        setGroupBindingState('success')
-        const timeoutId = window.setTimeout(() => {
-          setGroupBindingDialogChannel(null)
-          setGroupBindingState('idle')
-        }, 1500)
-
-        return () => {
-          window.clearTimeout(timeoutId)
-        }
-      }
-    }
-  }, [groupBindingDialogChannel, groupBindingState, channelBindingConfigs, getBindingConfig])
-
-  const updateBindingConfig = (
-    channelId: number,
-    updater: (prev: { bind_private: boolean; bind_group: boolean }) => {
-      bind_private: boolean
-      bind_group: boolean
-    }
-  ) => {
-    setChannelBindingConfigs((prev: NotificationChannelBindingConfig[]) => {
-      const existing = prev.find(
-        (cfg: NotificationChannelBindingConfig) => cfg.channel_id === channelId
-      ) ?? {
-        channel_id: channelId,
-        bind_private: true,
-        bind_group: false,
-      }
-      const next = updater({
-        bind_private: existing.bind_private,
-        bind_group: existing.bind_group,
+        const next = updater({
+          bind_private: existing.bind_private,
+          bind_group: existing.bind_group,
+        })
+        const rest = prev.filter(
+          (cfg: NotificationChannelBindingConfig) => cfg.channel_id !== channelId
+        )
+        return [...rest, { ...existing, ...next }]
       })
-      const rest = prev.filter(
-        (cfg: NotificationChannelBindingConfig) => cfg.channel_id !== channelId
-      )
-      return [...rest, { ...existing, ...next }]
-    })
-  }
-
-  const clearGroupBinding = (channelId: number) => {
-    setChannelBindingConfigs((prev: NotificationChannelBindingConfig[]) => {
-      const existing = prev.find(
-        (cfg: NotificationChannelBindingConfig) => cfg.channel_id === channelId
-      )
-      if (!existing) {
-        return prev
-      }
-
-      const rest = prev.filter(
-        (cfg: NotificationChannelBindingConfig) => cfg.channel_id !== channelId
-      )
-      return [
-        ...rest,
-        {
-          ...existing,
-          group_conversation_id: undefined,
-          group_name: undefined,
-        },
-      ]
-    })
-  }
-
-  const getPrivateBound = (channelId: number) => {
-    const channel = devAvailableChannels.find(item => item.id === channelId)
-    return Boolean(channel?.is_bound)
-  }
-
-  const handleStartGroupBinding = async (channelId: number) => {
-    const config = getBindingConfig(channelId)
-    await onStartBinding(channelId, config.bind_private, config.bind_group)
-  }
-
-  const handleRebind = async (channelId: number) => {
-    clearGroupBinding(channelId)
-    await handleStartGroupBinding(channelId)
-  }
-
-  const handleUnbind = async (channelId: number) => {
-    clearGroupBinding(channelId)
-    updateBindingConfig(channelId, prev => ({
-      ...prev,
-      bind_group: false,
-    }))
-    await onCancelBinding(channelId)
-  }
+    },
+    [setChannelBindingConfigs]
+  )
 
   return (
     <CollapsibleSection
@@ -315,78 +180,94 @@ export function NotificationSection({
               </div>
             )}
 
-            {selectedDingtalkChannels.length > 0 && (
+            {devNotificationChannels.length > 0 && (
               <div className="space-y-3" data-testid="notification-channel-config-section">
-                <div className="space-y-1">
-                  <Label className="text-sm font-medium">钉钉通知配置</Label>
-                  <p className="text-xs text-text-muted">
-                    {t(
-                      'notification_settings.channel_target_description',
-                      '配置此渠道的通知投递目标'
-                    )}
-                  </p>
+                <div className="flex items-center justify-between">
+                  <div className="space-y-1">
+                    <Label className="text-sm font-medium">渠道投递配置</Label>
+                    <p className="text-xs text-text-muted">配置已选渠道的通知投递目标</p>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={navigateToSettings}
+                    className="gap-1"
+                  >
+                    <ExternalLink className="h-3.5 w-3.5" />
+                    去绑定渠道
+                  </Button>
                 </div>
 
-                {selectedDingtalkChannels.map(channel => {
-                  const config = getBindingConfig(channel.id)
-                  const privateBound = getPrivateBound(channel.id)
-                  const isWaiting = bindingWaitingState[channel.id] ?? false
+                {devNotificationChannels.map(channelId => {
+                  const channel = devAvailableChannels.find(c => c.id === channelId)
+                  if (!channel) return null
+
+                  const config = getBindingConfig(channelId)
+                  const privateBound = getPrivateBound(channelId)
+                  const groupBound = getGroupBound(channelId)
 
                   return (
-                    <ChannelBindingPanel
-                      key={channel.id}
-                      channelId={channel.id}
-                      config={config}
-                      privateBound={privateBound}
-                      isWaiting={isWaiting}
-                      onPrivateChange={checked => {
-                        updateBindingConfig(channel.id, prev => ({
-                          ...prev,
-                          bind_private: checked,
-                        }))
-                        if (checked && !privateBound) {
-                          setPrivateBindingState('idle')
-                          setBoundPrivateName('')
-                          setPrivateBindingDialogChannel(channel.id)
-                        }
-                      }}
-                      onStartPrivateBinding={() => {
-                        setPrivateBindingState('idle')
-                        setBoundPrivateName('')
-                        setPrivateBindingDialogChannel(channel.id)
-                      }}
-                      onGroupChange={checked => {
-                        updateBindingConfig(channel.id, prev => ({
-                          ...prev,
-                          bind_group: checked,
-                        }))
-                        if (checked) {
-                          if (config.group_conversation_id) {
-                            setGroupBindingDialogChannel(null)
-                            setGroupBindingState('idle')
-                            setBoundGroupName(config.group_name || '')
-                          } else {
-                            setGroupBindingState('idle')
-                            setBoundGroupName('')
-                            setGroupBindingDialogChannel(channel.id)
-                          }
-                        } else {
-                          void onCancelBinding(channel.id)
-                        }
-                      }}
-                      onStartBinding={() => {
-                        setGroupBindingDialogChannel(channel.id)
-                      }}
-                      onCancelBinding={() => {
-                        void onCancelBinding(channel.id)
-                      }}
-                      onRebind={() => {
-                        void handleRebind(channel.id)
-                      }}
-                      onUnbind={() => {
-                        void handleUnbind(channel.id)
-                      }}
-                    />
+                    <div
+                      key={channelId}
+                      className="rounded-lg border border-border bg-background p-4 space-y-3"
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="font-medium">{channel.name}</span>
+                        <span className="text-xs text-text-muted">
+                          {channel.channel_type === 'dingtalk' ? '钉钉' : channel.channel_type}
+                        </span>
+                      </div>
+
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm">私聊投递</span>
+                            {privateBound ? (
+                              <span className="text-xs text-success">已绑定</span>
+                            ) : (
+                              <span className="text-xs text-warning">未绑定</span>
+                            )}
+                          </div>
+                          <input
+                            type="checkbox"
+                            checked={config.bind_private}
+                            onChange={e =>
+                              updateBindingConfig(channelId, prev => ({
+                                ...prev,
+                                bind_private: e.target.checked,
+                              }))
+                            }
+                            className="rounded border-border"
+                          />
+                        </div>
+
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm">群聊投递</span>
+                            {groupBound ? (
+                              <span className="text-xs text-success">
+                                已绑定: {config.group_name || '群组'}
+                              </span>
+                            ) : (
+                              <span className="text-xs text-warning">未绑定</span>
+                            )}
+                          </div>
+                          <input
+                            type="checkbox"
+                            checked={config.bind_group}
+                            disabled={!groupBound}
+                            onChange={e =>
+                              updateBindingConfig(channelId, prev => ({
+                                ...prev,
+                                bind_group: e.target.checked,
+                              }))
+                            }
+                            className="rounded border-border"
+                          />
+                        </div>
+                      </div>
+                    </div>
                   )
                 })}
               </div>
@@ -401,108 +282,6 @@ export function NotificationSection({
 
         {devSettingsLoading && <p className="text-xs text-text-muted">{t('common:loading')}</p>}
       </div>
-
-      <BindingProgressDialog
-        open={privateBindingDialogChannel !== null}
-        title={t('notification_settings.bind_private_title', '绑定到私聊')}
-        description={t(
-          'notification_settings.bind_private_desc',
-          '请在钉钉私聊机器人发送任意消息，系统将自动完成绑定。'
-        )}
-        state={privateBindingState}
-        steps={[
-          { title: t('notification_settings.step_start', '开始绑定') },
-          {
-            title: t('notification_settings.step_send_message', '发送消息'),
-            hint: t(
-              'notification_settings.bind_private_desc',
-              '请在钉钉私聊机器人发送任意消息，系统将自动完成绑定。'
-            ),
-          },
-          { title: t('notification_settings.step_complete', '完成绑定') },
-        ]}
-        startLabel={t('notification_settings.step_start', '开始绑定')}
-        waitingTitle={t('notification_settings.waiting_binding', '正在等待绑定...')}
-        waitingHint={t(
-          'notification_settings.bind_private_desc',
-          '请在钉钉私聊机器人发送任意消息，系统将自动完成绑定。'
-        )}
-        successTitle={t('notification_settings.binding_success', '绑定成功')}
-        successHint={boundPrivateName}
-        cancelLabel={t('common:actions.cancel')}
-        startTestId="private-binding-start-button"
-        onStart={() => {
-          if (privateBindingDialogChannel) {
-            setPrivateBindingState('waiting')
-            const config = getBindingConfig(privateBindingDialogChannel)
-            void onStartBinding(privateBindingDialogChannel, true, config.bind_group)
-          }
-        }}
-        onCancel={() => {
-          if (privateBindingDialogChannel) {
-            void onCancelBinding(privateBindingDialogChannel)
-          }
-          setPrivateBindingDialogChannel(null)
-          setPrivateBindingState('idle')
-        }}
-        onOpenChange={open => {
-          if (!open) {
-            if (privateBindingState !== 'success' && privateBindingDialogChannel) {
-              void onCancelBinding(privateBindingDialogChannel)
-            }
-            setPrivateBindingDialogChannel(null)
-            setPrivateBindingState('idle')
-          }
-        }}
-      />
-
-      <BindingProgressDialog
-        open={groupBindingDialogChannel !== null}
-        title={t('notification_settings.bind_group_title', '绑定到群聊')}
-        description={t(
-          'notification_settings.bind_group_desc',
-          '请将机器人加入目标群，在群里 @机器人 发送一条消息，系统会自动绑定并保持等待中状态。'
-        )}
-        state={groupBindingState}
-        steps={bindConfig.steps.slice(0, 3).map(step => ({
-          title: replaceVariables(step.title || '', bindConfig.variables || {}),
-          hint: step.hint ? replaceVariables(step.hint, bindConfig.variables || {}) : undefined,
-        }))}
-        startLabel={t('notification_settings.step_start', '开始绑定')}
-        waitingTitle={t('notification_settings.group_binding_waiting_title', '正在等待群聊消息...')}
-        waitingHint={t(
-          'notification_settings.group_binding_waiting_desc',
-          '请在群聊中 @机器人 发送任意消息'
-        )}
-        successTitle={t('notification_settings.binding_success', '绑定成功')}
-        successHint={boundGroupName}
-        cancelLabel={t('common:actions.cancel')}
-        startTestId="group-binding-start-button"
-        onStart={() => {
-          if (groupBindingDialogChannel) {
-            setGroupBindingState('waiting')
-            const config = getBindingConfig(groupBindingDialogChannel)
-            void onStartBinding(groupBindingDialogChannel, config.bind_private, config.bind_group)
-          }
-        }}
-        onCancel={() => {
-          if (groupBindingDialogChannel) {
-            void onCancelBinding(groupBindingDialogChannel)
-          }
-          setGroupBindingDialogChannel(null)
-          setGroupBindingState('idle')
-        }}
-        onOpenChange={open => {
-          if (!open) {
-            if (groupBindingState !== 'success' && groupBindingDialogChannel) {
-              void onCancelBinding(groupBindingDialogChannel)
-            }
-            setGroupBindingDialogChannel(null)
-            setGroupBindingState('idle')
-          }
-        }}
-        contentClassName="sm:max-w-[400px]"
-      />
     </CollapsibleSection>
   )
 }

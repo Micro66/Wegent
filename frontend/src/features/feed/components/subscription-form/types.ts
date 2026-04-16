@@ -130,7 +130,4 @@ export interface NotificationSectionProps {
   setNotificationWebhooks: React.Dispatch<React.SetStateAction<NotificationWebhook[]>>
   channelBindingConfigs: NotificationChannelBindingConfig[]
   setChannelBindingConfigs: React.Dispatch<React.SetStateAction<NotificationChannelBindingConfig[]>>
-  onStartBinding: (channelId: number, bindPrivate: boolean, bindGroup: boolean) => Promise<void>
-  onCancelBinding: (channelId: number) => Promise<void>
-  bindingWaitingState: Record<number, boolean>
 }
