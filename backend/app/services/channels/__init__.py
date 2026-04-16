@@ -29,6 +29,10 @@ Generic Utilities (channel-agnostic):
 """
 
 from app.services.channels.base import BaseChannelProvider
+from app.services.channels.binding_service import (
+    IMChannelBindingService,
+    binding_service,
+)
 from app.services.channels.callback import (
     BaseCallbackInfo,
     BaseChannelCallbackService,
@@ -97,4 +101,7 @@ __all__ = [
     "get_channel_manager",
     "get_callback_registry",
     "handle_channel_task_completed",
+    # Binding service
+    "IMChannelBindingService",
+    "binding_service",
 ]
