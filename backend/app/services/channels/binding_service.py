@@ -38,6 +38,10 @@ from sqlalchemy.orm import Session
 from app.core.cache import cache_manager
 from app.models.kind import Kind
 from app.models.user import User
+
+# Constants for Messager channel lookup
+MESSAGER_KIND = "Messager"
+MESSAGER_USER_ID = 0  # System-level resource
 from app.schemas.im_channel import (
     ChannelType,
     IMChannelUserBinding,
@@ -66,90 +70,95 @@ class IMChannelBindingService:
     ) -> List[IMChannelUserBinding]:
         """Get all channel bindings for a user.
 
-        Fetches bindings from User.preferences['im_channels'] and enriches
-        them with channel names from the Kind (Messager) records.
+        Fetches all available Messager channels and enriches them with
+        user's binding configuration from User.preferences['im_channels'].
 
         Args:
             db: Database session
             user_id: User ID
 
         Returns:
-            List of IMChannelUserBinding with channel names populated
+            List of IMChannelUserBinding with channel names populated.
+            Returns all available channels, even if user has no bindings configured.
         """
+        # Get all enabled Messager channels (global channels created by admin)
+        channels = (
+            db.query(Kind)
+            .filter(
+                Kind.kind == MESSAGER_KIND,
+                Kind.user_id == MESSAGER_USER_ID,
+                Kind.is_active == True,
+            )
+            .all()
+        )
+
+        if not channels:
+            return []
+
+        # Get user's existing bindings from preferences
         user = db.query(User).filter(User.id == user_id).first()
-        if not user or not user.preferences:
-            return []
-
-        # Parse preferences
-        try:
-            prefs = (
-                json.loads(user.preferences)
-                if isinstance(user.preferences, str)
-                else user.preferences
-            )
-        except (json.JSONDecodeError, TypeError):
-            prefs = {}
-
-        im_channels = prefs.get("im_channels", {})
-        if not im_channels:
-            return []
-
-        # Get channel IDs for name lookup
-        channel_ids = []
-        for channel_id_str in im_channels.keys():
+        im_channels = {}
+        if user and user.preferences:
             try:
-                channel_ids.append(int(channel_id_str))
-            except (ValueError, TypeError):
-                continue
+                prefs = (
+                    json.loads(user.preferences)
+                    if isinstance(user.preferences, str)
+                    else user.preferences
+                )
+                im_channels = prefs.get("im_channels", {})
+            except (json.JSONDecodeError, TypeError):
+                im_channels = {}
 
-        # Fetch channel names from Kind records
-        channel_names: Dict[int, str] = {}
-        if channel_ids:
-            channels = (
-                db.query(Kind)
-                .filter(Kind.id.in_(channel_ids), Kind.kind == "Messager")
-                .all()
-            )
-            for channel in channels:
-                channel_names[channel.id] = channel.name
-
-        # Build binding objects
+        # Build binding objects for all available channels
         bindings = []
-        for channel_id_str, data in im_channels.items():
-            try:
-                channel_id = int(channel_id_str)
-            except (ValueError, TypeError):
-                continue
+        for channel in channels:
+            channel_id = channel.id
+            channel_id_str = str(channel_id)
 
-            channel_type = data.get("channel_type", "")
-            private_team_id = data.get("private_team_id")
+            # Get channel type from spec
+            channel_type = ""
+            try:
+                spec = (
+                    json.loads(channel.json)
+                    if isinstance(channel.json, str)
+                    else channel.json
+                )
+                if spec:
+                    channel_type = spec.get("channelType", "")
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+            # Get user's binding config for this channel (if any)
+            data = im_channels.get(channel_id_str, {})
+            private_team_id = data.get("private_team_id") if data else None
 
             # Parse group bindings
             group_bindings = []
-            for gb in data.get("group_bindings", []):
-                try:
-                    bound_at = None
-                    if gb.get("bound_at"):
-                        try:
-                            bound_at = datetime.fromisoformat(gb["bound_at"])
-                        except (ValueError, TypeError):
-                            pass
+            if data:
+                for gb in data.get("group_bindings", []):
+                    try:
+                        bound_at = None
+                        if gb.get("bound_at"):
+                            try:
+                                bound_at = datetime.fromisoformat(gb["bound_at"])
+                            except (ValueError, TypeError):
+                                pass
 
-                    group_bindings.append(
-                        IMGroupBinding(
-                            conversation_id=gb.get("conversation_id", ""),
-                            group_name=gb.get("group_name", ""),
-                            team_id=gb.get("team_id", 0),
-                            bound_at=bound_at,
+                        group_bindings.append(
+                            IMGroupBinding(
+                                conversation_id=gb.get("conversation_id", ""),
+                                group_name=gb.get("group_name", ""),
+                                team_id=gb.get("team_id", 0),
+                                bound_at=bound_at,
+                            )
                         )
-                    )
-                except Exception as e:
-                    logger.warning(f"Failed to parse group binding: {e}")
-                    continue
+                    except Exception as e:
+                        logger.warning(f"Failed to parse group binding: {e}")
+                        continue
 
             binding = IMChannelUserBinding(
                 channel_id=channel_id,
-                channel_name=channel_names.get(channel_id, ""),
+                channel_name=channel.name,
                 channel_type=channel_type,
                 private_team_id=private_team_id,
                 group_bindings=group_bindings,

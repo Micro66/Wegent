@@ -38,10 +38,13 @@ def im_bindings_client(test_db: Session, test_user: User) -> TestClient:
 
 
 @pytest.fixture
-def sample_messager_channel(test_db: Session, test_user: User) -> Kind:
-    """Create a sample Messager channel for testing."""
+def sample_messager_channel(test_db: Session) -> Kind:
+    """Create a sample Messager channel for testing.
+
+    Messager channels are system-level resources with user_id=0.
+    """
     channel = Kind(
-        user_id=test_user.id,
+        user_id=0,  # System-level resource
         name="Test DingTalk Channel",
         namespace="default",
         kind="Messager",
