@@ -199,3 +199,55 @@ class TelegramChannelConfig(BaseModel):
         default=True,
         description="Use inline keyboard buttons for interactive commands",
     )
+
+
+# =============================================================================
+# IM Channel Agent Binding Schemas
+# =============================================================================
+
+
+class IMGroupBinding(BaseModel):
+    """Schema for group binding in IM channels.
+
+    Represents a binding between a group conversation and a team.
+    """
+
+    conversation_id: str = Field(
+        ..., description="Unique conversation ID from IM platform"
+    )
+    group_name: str = Field(..., description="Display name of the group")
+    team_id: int = Field(..., description="ID of the team bound to this group")
+    bound_at: Optional[datetime] = Field(
+        default=None, description="When the binding was created"
+    )
+
+
+class IMChannelUserBinding(BaseModel):
+    """Schema for per-user, per-channel binding configuration.
+
+    Stored in User.preferences JSON field under 'im_channels' key.
+    """
+
+    channel_id: int = Field(..., description="ID of the IM channel")
+    channel_name: str = Field(..., description="Display name of the channel")
+    channel_type: str = Field(
+        ..., description="Type of channel: dingtalk, feishu, wechat, telegram"
+    )
+    private_team_id: Optional[int] = Field(
+        default=None,
+        description="Team ID for private (1:1) messages, null means not bound",
+    )
+    group_bindings: List[IMGroupBinding] = Field(
+        default_factory=list, description="List of group conversation bindings"
+    )
+
+
+class UpdateIMBindingRequest(BaseModel):
+    """Unified request for updating both private and group bindings."""
+
+    private_team_id: Optional[int] = Field(
+        default=None, description="Team ID for private messages, null to unbind"
+    )
+    group: Optional[IMGroupBinding] = Field(
+        default=None, description="If provided, adds or updates group binding"
+    )
