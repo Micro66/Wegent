@@ -707,6 +707,22 @@ export type {
   PersonalKnowledgeBaseGroup,
 } from './knowledge'
 
+// IM Channel Binding Types
+export interface IMGroupBinding {
+  conversation_id: string
+  group_name: string
+  team_id: number
+  bound_at?: string
+}
+
+export interface IMChannelUserBinding {
+  channel_id: number
+  channel_name: string
+  channel_type: string
+  private_team_id?: number
+  group_bindings: IMGroupBinding[]
+}
+
 // Project Types
 /** Task within a project */
 export interface ProjectTask {

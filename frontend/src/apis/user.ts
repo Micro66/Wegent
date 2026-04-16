@@ -14,6 +14,8 @@ import type {
   QuickAccessResponse,
   WelcomeConfigResponse,
   DefaultTeamsResponse,
+  IMChannelUserBinding,
+  IMGroupBinding,
 } from '@/types/api'
 import type { NotificationChannelInfo } from '@/types/subscription'
 
@@ -234,6 +236,51 @@ export const userApis = {
 
   isAuthenticated(): boolean {
     return isAuthenticated()
+  },
+
+  /**
+   * Get current user's IM channel bindings
+   * Returns list of channels with their binding configurations
+   */
+  async getMyIMBindings(): Promise<IMChannelUserBinding[]> {
+    return apiClient.get('/users/me/im-bindings')
+  },
+
+  /**
+   * Update IM binding for a channel
+   * Can update private_team_id and/or add/update a group binding
+   */
+  async updateIMBinding(
+    channelId: number,
+    data: { private_team_id?: number; group?: IMGroupBinding }
+  ): Promise<IMChannelUserBinding> {
+    return apiClient.put(`/users/me/im-bindings/${channelId}`, data)
+  },
+
+  /**
+   * Remove a group binding from a channel
+   */
+  async removeGroupBinding(
+    channelId: number,
+    conversationId: string
+  ): Promise<IMChannelUserBinding> {
+    return apiClient.delete(
+      `/users/me/im-bindings/${channelId}/groups/${encodeURIComponent(conversationId)}`
+    )
+  },
+
+  /**
+   * Start an IM binding session for interactive binding
+   */
+  async startIMBindingSession(channelId: number): Promise<void> {
+    return apiClient.post(`/users/me/im-bindings/${channelId}/start-session`)
+  },
+
+  /**
+   * Cancel an active IM binding session
+   */
+  async cancelIMBindingSession(channelId: number): Promise<void> {
+    return apiClient.post(`/users/me/im-bindings/${channelId}/cancel-session`)
   },
 }
 
