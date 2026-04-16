@@ -6,6 +6,7 @@
 
 import { useTranslation } from '@/hooks/useTranslation'
 import GitHubIntegration from './GitHubIntegration'
+import IMChannelBindings from './IMChannelBindings'
 import McpProviderIntegrations from './McpProviderIntegrations'
 
 export default function IntegrationsPage() {
@@ -23,6 +24,9 @@ export default function IntegrationsPage() {
 
       {/* Git integration section */}
       <GitHubIntegration />
+
+      {/* IM Channel Agent Bindings section */}
+      <IMChannelBindings />
 
       <McpProviderIntegrations providerId="dingtalk" />
     </div>
