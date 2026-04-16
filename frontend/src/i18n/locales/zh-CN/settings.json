@@ -111,6 +111,16 @@
       "success_message": "群组已成功绑定到智能体"
     }
   },
+  "teams": {
+    "bindings": {
+      "current_bindings": "当前绑定",
+      "private": "私聊",
+      "group": "群组",
+      "unbind": "解绑",
+      "bind_to_private": "绑定到私聊",
+      "no_bindings_available": "暂无可用的绑定选项"
+    }
+  },
   "bot": {
     "allowed_models": {
       "label": "限制可用模型",

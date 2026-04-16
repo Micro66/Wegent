@@ -111,6 +111,16 @@
       "success_message": "Group successfully bound to agent"
     }
   },
+  "teams": {
+    "bindings": {
+      "current_bindings": "Current Bindings",
+      "private": "Private",
+      "group": "Group",
+      "unbind": "Unbind",
+      "bind_to_private": "Bind to Private",
+      "no_bindings_available": "No binding options available"
+    }
+  },
   "bot": {
     "allowed_models": {
       "label": "Restrict Available Models",

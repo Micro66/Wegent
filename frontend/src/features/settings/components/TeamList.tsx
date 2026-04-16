@@ -18,7 +18,8 @@ import {
   LinkSlashIcon,
   SparklesIcon,
 } from '@heroicons/react/24/outline'
-import { Bot, Team } from '@/types/api'
+import { Link as LinkIcon } from 'lucide-react'
+import { Bot, Team, IMChannelUserBinding } from '@/types/api'
 import { fetchTeamsList, deleteTeam, shareTeam, checkTeamRunningTasks } from '../services/teams'
 import { CheckRunningTasksResponse } from '@/apis/common'
 import { fetchBotsList } from '../services/bots'
@@ -45,9 +46,18 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown'
 import { ResourceListItem } from '@/components/common/ResourceListItem'
 import { TeamIconDisplay } from './teams/TeamIconDisplay'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { userApis } from '@/apis/user'
 
 interface TeamListProps {
   scope?: 'personal' | 'group' | 'all'
@@ -86,6 +96,8 @@ export default function TeamList({
   const [editDialogOpen, setEditDialogOpen] = useState(false)
   const [modeFilter, setModeFilter] = useState<ModeFilter>('all')
   const [wizardOpen, setWizardOpen] = useState(false)
+  const [imBindings, setImBindings] = useState<IMChannelUserBinding[]>([])
+  const [isLoadingBindings, setIsLoadingBindings] = useState(false)
   const router = useRouter()
 
   const setTeamsSorted = useCallback<React.Dispatch<React.SetStateAction<Team[]>>>(
@@ -131,6 +143,111 @@ export default function TeamList({
     }
     loadData()
   }, [toast, setBotsSorted, setTeamsSorted, t, scope, groupName])
+
+  // Fetch IM bindings when in personal scope
+  useEffect(() => {
+    if (scope === 'personal') {
+      fetchIMBindings()
+    }
+  }, [scope])
+
+  const fetchIMBindings = async () => {
+    setIsLoadingBindings(true)
+    try {
+      const bindings = await userApis.getMyIMBindings()
+      setImBindings(bindings)
+    } catch (error) {
+      console.error('Failed to fetch IM bindings:', error)
+    } finally {
+      setIsLoadingBindings(false)
+    }
+  }
+
+  // Get bindings that use this team
+  const getTeamBindings = (teamId: number) => {
+    return imBindings.filter(
+      binding =>
+        binding.private_team_id === teamId || binding.group_bindings.some(g => g.team_id === teamId)
+    )
+  }
+
+  // Get available channels for binding (not already bound to this team as private)
+  const getAvailableChannelsForBinding = (teamId: number) => {
+    return imBindings.filter(binding => binding.private_team_id !== teamId)
+  }
+
+  // Handle unbind from private
+  const handleUnbindPrivate = async (channelId: number) => {
+    try {
+      await userApis.updateIMBinding(channelId, { private_team_id: undefined })
+      // Update local state
+      setImBindings(prev =>
+        prev.map(binding =>
+          binding.channel_id === channelId ? { ...binding, private_team_id: undefined } : binding
+        )
+      )
+      toast({
+        title: t('settings:im_bindings.private_team_updated'),
+      })
+    } catch (error) {
+      console.error('Failed to unbind private team:', error)
+      toast({
+        variant: 'destructive',
+        title: t('settings:im_bindings.update_failed'),
+      })
+    }
+  }
+
+  // Handle unbind from group
+  const handleUnbindGroup = async (channelId: number, conversationId: string) => {
+    try {
+      await userApis.removeGroupBinding(channelId, conversationId)
+      // Update local state
+      setImBindings(prev =>
+        prev.map(binding =>
+          binding.channel_id === channelId
+            ? {
+                ...binding,
+                group_bindings: binding.group_bindings.filter(
+                  g => g.conversation_id !== conversationId
+                ),
+              }
+            : binding
+        )
+      )
+      toast({
+        title: t('settings:im_bindings.group_removed'),
+      })
+    } catch (error) {
+      console.error('Failed to remove group binding:', error)
+      toast({
+        variant: 'destructive',
+        title: t('settings:im_bindings.remove_failed'),
+      })
+    }
+  }
+
+  // Handle bind to private
+  const handleBindToPrivate = async (channelId: number, teamId: number) => {
+    try {
+      await userApis.updateIMBinding(channelId, { private_team_id: teamId })
+      // Update local state
+      setImBindings(prev =>
+        prev.map(binding =>
+          binding.channel_id === channelId ? { ...binding, private_team_id: teamId } : binding
+        )
+      )
+      toast({
+        title: t('settings:im_bindings.private_team_updated'),
+      })
+    } catch (error) {
+      console.error('Failed to bind private team:', error)
+      toast({
+        variant: 'destructive',
+        title: t('settings:im_bindings.update_failed'),
+      })
+    }
+  }
 
   useEffect(() => {
     if (editingTeamId === null) {
@@ -601,6 +718,130 @@ export default function TeamList({
                             >
                               <ShareIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
                             </Button>
+                          )}
+                          {/* IM Channel Binding Dropdown - only for personal teams */}
+                          {scope === 'personal' && !isPublicTeam(team) && !isGroupTeam(team) && (
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  title={t('settings:im_bindings.title')}
+                                  className="h-7 w-7 sm:h-8 sm:w-8"
+                                  disabled={isLoadingBindings}
+                                  data-testid={`binding-dropdown-${team.id}`}
+                                >
+                                  <LinkIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end" className="w-64">
+                                <DropdownMenuLabel>
+                                  {t('settings:im_bindings.title')}
+                                </DropdownMenuLabel>
+                                <DropdownMenuSeparator />
+                                {(() => {
+                                  const teamBindings = getTeamBindings(team.id)
+                                  const hasBindings = teamBindings.length > 0
+                                  const privateBinding = teamBindings.find(
+                                    b => b.private_team_id === team.id
+                                  )
+                                  const groupBindings = teamBindings.flatMap(b =>
+                                    b.group_bindings
+                                      .filter(g => g.team_id === team.id)
+                                      .map(g => ({
+                                        ...g,
+                                        channel_id: b.channel_id,
+                                        channel_name: b.channel_name,
+                                      }))
+                                  )
+
+                                  return (
+                                    <>
+                                      {/* Current Bindings Section */}
+                                      {hasBindings ? (
+                                        <>
+                                          <div className="px-2 py-1.5 text-xs text-text-muted">
+                                            {t('teams.bindings.current_bindings')}
+                                          </div>
+                                          {/* Private binding */}
+                                          {privateBinding && (
+                                            <DropdownMenuItem
+                                              onClick={() =>
+                                                handleUnbindPrivate(privateBinding.channel_id)
+                                              }
+                                              className="flex items-center justify-between"
+                                            >
+                                              <span className="truncate">
+                                                {privateBinding.channel_name} (
+                                                {t('teams.bindings.private')})
+                                              </span>
+                                              <span className="text-xs text-error ml-2">
+                                                {t('teams.bindings.unbind')}
+                                              </span>
+                                            </DropdownMenuItem>
+                                          )}
+                                          {/* Group bindings */}
+                                          {groupBindings.map(group => (
+                                            <DropdownMenuItem
+                                              key={group.conversation_id}
+                                              onClick={() =>
+                                                handleUnbindGroup(
+                                                  group.channel_id,
+                                                  group.conversation_id
+                                                )
+                                              }
+                                              className="flex items-center justify-between"
+                                            >
+                                              <span className="truncate">
+                                                {group.group_name} ({t('teams.bindings.group')})
+                                              </span>
+                                              <span className="text-xs text-error ml-2">
+                                                {t('teams.bindings.unbind')}
+                                              </span>
+                                            </DropdownMenuItem>
+                                          ))}
+                                          <DropdownMenuSeparator />
+                                        </>
+                                      ) : null}
+
+                                      {/* Bind to Private Section */}
+                                      {(() => {
+                                        const availableChannels = getAvailableChannelsForBinding(
+                                          team.id
+                                        )
+                                        if (availableChannels.length === 0) return null
+                                        return (
+                                          <>
+                                            <div className="px-2 py-1.5 text-xs text-text-muted">
+                                              {t('teams.bindings.bind_to_private')}
+                                            </div>
+                                            {availableChannels.map(channel => (
+                                              <DropdownMenuItem
+                                                key={channel.channel_id}
+                                                onClick={() =>
+                                                  handleBindToPrivate(channel.channel_id, team.id)
+                                                }
+                                              >
+                                                <span className="truncate">
+                                                  {channel.channel_name}
+                                                </span>
+                                              </DropdownMenuItem>
+                                            ))}
+                                          </>
+                                        )
+                                      })()}
+
+                                      {!hasBindings &&
+                                        getAvailableChannelsForBinding(team.id).length === 0 && (
+                                          <div className="px-2 py-1.5 text-xs text-text-muted">
+                                            {t('teams.bindings.no_bindings_available')}
+                                          </div>
+                                        )}
+                                    </>
+                                  )
+                                })()}
+                              </DropdownMenuContent>
+                            </DropdownMenu>
                           )}
                           {shouldShowDelete(team) && (
                             <Button
