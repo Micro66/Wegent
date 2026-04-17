@@ -744,13 +744,15 @@ async def create_task_and_subtasks(
             f"[create_task_and_subtasks] Building video_config for task {task_id}: {video_config}"
         )
 
+    selected_team_id = team.id
+
     # Create USER subtask (always created)
     user_subtask = create_user_subtask(
         db=db,
         subtask_user_id=subtask_user_id,
         sender_user_id=user.id,
         task_id=task_id,
-        team_id=team.id,
+        team_id=selected_team_id,
         bot_ids=bot_ids,
         message=message,
         next_message_id=next_message_id,
@@ -765,7 +767,7 @@ async def create_task_and_subtasks(
             db=db,
             subtask_user_id=subtask_user_id,
             task_id=task_id,
-            team_id=team.id,
+            team_id=selected_team_id,
             bot_ids=bot_ids,
             next_message_id=next_message_id + 1,
             parent_id=next_message_id,

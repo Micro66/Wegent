@@ -62,7 +62,10 @@ from app.services.chat.operations import (
     reset_subtask_for_retry,
     update_subtask_on_cancel,
 )
-from app.services.chat.group_chat_config import get_group_chat_team_refs
+from app.services.chat.group_chat_config import (
+    get_group_chat_team_refs,
+    is_allowed_group_chat_team,
+)
 from app.services.chat.rag import process_context_and_rag
 from app.services.chat.storage import session_manager
 from app.services.chat.storage.db import get_db_session, run_sync_in_executor
@@ -589,15 +592,30 @@ class ChatNamespace(socketio.AsyncNamespace):
                     task_json = existing_task.json or {}
             allowed_group_chat_team_refs = get_group_chat_team_refs(task_json)
 
-            # Check if AI should be triggered (for group chat with @mention)
-            # For existing tasks: use task_json.spec.is_group_chat
-            # For new tasks: use payload.is_group_chat from frontend
+            task_is_group_chat = task_json.get("spec", {}).get("is_group_chat", False)
+
+            if task_is_group_chat and not is_allowed_group_chat_team(
+                task_json, payload.team_id
+            ):
+                logger.warning(
+                    "[WS] chat:send rejected disallowed group chat team: task_id=%s team_id=%s",
+                    payload.task_id,
+                    payload.team_id,
+                )
+                return {"error": "Selected agent is not available in this group chat."}
+
+            # Web group chat routes by selected team_id instead of @mention text.
+            # Keep mention-based trigger logic for non-group-chat flows only.
             team_name = team.name
-            should_trigger_ai = should_trigger_ai_response(
-                task_json,
-                payload.message,
-                team_name,
-                request_is_group_chat=payload.is_group_chat,
+            should_trigger_ai = (
+                True
+                if task_is_group_chat or payload.is_group_chat
+                else should_trigger_ai_response(
+                    task_json,
+                    payload.message,
+                    team_name,
+                    request_is_group_chat=payload.is_group_chat,
+                )
             )
             logger.info(
                 f"[WS] chat:send group chat check: task_id={payload.task_id}, "
