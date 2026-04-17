@@ -966,6 +966,42 @@ class TestOpenAPIResponsesDelete:
 class TestOpenAPIResponsesHelpers:
     """Test helper functions used in openapi_responses."""
 
+    def test_groupchat_task_schema_supports_multi_agent_config(self):
+        """Test Task schema preserves multi-agent GroupChat config fields."""
+        from app.schemas.kind import Task
+
+        task = Task.model_validate(
+            {
+                "apiVersion": "agent.wecode.io/v1",
+                "kind": "Task",
+                "metadata": {"name": "group-chat-task", "namespace": "default"},
+                "spec": {
+                    "title": "Group chat task",
+                    "prompt": "Route this message",
+                    "teamRef": {"name": "fallback-team", "namespace": "default"},
+                    "teamRefs": [
+                        {"name": "agent-a", "namespace": "default"},
+                        {"name": "agent-b", "namespace": "default"},
+                    ],
+                    "workspaceRef": {"name": "workspace-1", "namespace": "default"},
+                    "is_group_chat": True,
+                    "groupChatConfig": {
+                        "historyWindow": {"maxDays": 7, "maxMessages": 150}
+                    },
+                },
+            }
+        )
+
+        task_spec = task.spec.model_dump(exclude_none=True)
+
+        assert task_spec["teamRefs"] == [
+            {"name": "agent-a", "namespace": "default"},
+            {"name": "agent-b", "namespace": "default"},
+        ]
+        assert task_spec["groupChatConfig"] == {
+            "historyWindow": {"maxDays": 7, "maxMessages": 150}
+        }
+
     def test_parse_model_string_two_parts(self):
         """Test parsing model string with namespace and team name."""
         from app.services.openapi.helpers import parse_model_string

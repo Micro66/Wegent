@@ -525,14 +525,29 @@ class KnowledgeBaseTaskRef(BaseModel):
     boundAt: Optional[str] = None  # Binding timestamp in ISO format
 
 
+class GroupChatHistoryWindow(BaseModel):
+    """History window configuration for group chat context building."""
+
+    maxDays: int
+    maxMessages: int
+
+
+class GroupChatConfig(BaseModel):
+    """Group chat configuration stored on the task spec."""
+
+    historyWindow: Optional[GroupChatHistoryWindow] = None
+
+
 class TaskSpec(BaseModel):
     """Task specification"""
 
     title: str
     prompt: str
     teamRef: TeamTaskRef
+    teamRefs: Optional[List[TeamTaskRef]] = None
     workspaceRef: WorkspaceTaskRef
     is_group_chat: bool = False  # Whether this task is a group chat
+    groupChatConfig: Optional[GroupChatConfig] = None
     knowledgeBaseRefs: Optional[List[KnowledgeBaseTaskRef]] = (
         None  # Bound knowledge bases for group chat
     )

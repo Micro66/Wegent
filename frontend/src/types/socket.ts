@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import type { TaskType } from './api'
+import type { GroupChatConfig, TaskTeamRef, TaskType } from './api'
 
 /**
  * Socket.IO event types and payload definitions
@@ -397,6 +397,8 @@ export interface TaskCreatedPayload {
   team_name: string
   created_at: string
   is_group_chat?: boolean
+  teamRefs?: TaskTeamRef[] | null
+  groupChatConfig?: GroupChatConfig | null
 }
 
 export interface TaskDeletedPayload {
@@ -435,6 +437,8 @@ export interface TaskInvitedPayload {
   }
   is_group_chat: boolean
   created_at: string
+  teamRefs?: TaskTeamRef[] | null
+  groupChatConfig?: GroupChatConfig | null
 }
 
 export interface TaskAppUpdatePayload {

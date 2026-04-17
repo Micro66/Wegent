@@ -275,6 +275,21 @@ export interface OpenLinks {
   target_branch: string | null
 }
 
+export interface TaskTeamRef {
+  name: string
+  namespace: string
+  user_id?: number | null
+}
+
+export interface GroupChatHistoryWindow {
+  maxDays: number
+  maxMessages: number
+}
+
+export interface GroupChatConfig {
+  historyWindow?: GroupChatHistoryWindow | null
+}
+
 /** App preview information (set by expose_service tool when service starts) */
 export interface TaskApp {
   address: string
@@ -307,6 +322,8 @@ export interface TaskDetail {
   is_group_chat?: boolean // Whether this task is a group chat
   is_group_owner?: boolean // Whether current user is the group owner
   member_count?: number // Number of active members in the group
+  teamRefs?: TaskTeamRef[] | null
+  groupChatConfig?: GroupChatConfig | null
   app?: TaskApp | null // App preview information (set by expose_service tool)
   device_id?: string | null // Device ID used for execution (for task history)
   preserve_executor?: boolean // Whether to preserve executor pod after task completion
@@ -415,6 +432,8 @@ export interface Task {
   updated_at: string
   completed_at: string
   is_group_chat?: boolean // Whether this task is a group chat
+  teamRefs?: TaskTeamRef[] | null
+  groupChatConfig?: GroupChatConfig | null
   knowledge_base_id?: number // Knowledge base ID for knowledge type tasks
 }
 
