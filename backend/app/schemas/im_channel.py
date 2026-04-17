@@ -11,7 +11,7 @@ IM channels are stored in the kinds table with kind="Messager".
 from datetime import datetime
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, PrivateAttr, field_validator
 
 # Channel type literals
 ChannelType = Literal["dingtalk", "feishu", "wechat", "telegram"]
@@ -245,9 +245,25 @@ class IMChannelUserBinding(BaseModel):
 class UpdateIMBindingRequest(BaseModel):
     """Unified request for updating both private and group bindings."""
 
+    model_config = {"extra": "ignore"}
+
     private_team_id: Optional[int] = Field(
         default=None, description="Team ID for private messages, null to unbind"
     )
     group: Optional[IMGroupBinding] = Field(
         default=None, description="If provided, adds or updates group binding"
     )
+
+    # Private attribute to track if private_team_id was explicitly set
+    _private_team_id_explicitly_set: bool = PrivateAttr(default=False)
+
+    def __init__(self, **data):
+        # Check if private_team_id key was in the input data before calling super
+        explicitly_set = "private_team_id" in data
+        super().__init__(**data)
+        # Set the private attribute after super().__init__
+        self._private_team_id_explicitly_set = explicitly_set
+
+    def is_private_team_id_set(self) -> bool:
+        """Check if private_team_id was explicitly provided (including null)."""
+        return self._private_team_id_explicitly_set

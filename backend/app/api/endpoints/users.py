@@ -716,12 +716,12 @@ async def update_my_im_binding(
 
 
 @router.delete(
-    "/me/im-bindings/{channel_id}/groups/{conversation_id}",
+    "/me/im-bindings/{channel_id}/groups",
     response_model=IMChannelUserBinding,
 )
 async def delete_my_group_binding(
     channel_id: int,
-    conversation_id: str,
+    conversation_id: str = Query(..., description="Group conversation ID"),
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ):

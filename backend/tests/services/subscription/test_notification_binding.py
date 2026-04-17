@@ -245,3 +245,104 @@ def test_update_developer_settings_preserves_group_name(test_db, test_user):
             "group_name": "测试机器人",
         }
     ]
+
+
+def _create_messager_kind(test_db, kind_id: int = 1001) -> Kind:
+    """Create a test Messager channel."""
+    messager = Kind(
+        id=kind_id,
+        kind="Messager",
+        user_id=0,  # System-level
+        name=f"Test Messager {kind_id}",
+        namespace="default",
+        json={
+            "channelType": "dingtalk",
+            "isEnabled": True,
+            "config": {"client_id": "test"},
+        },
+        is_active=True,
+    )
+    test_db.add(messager)
+    test_db.commit()
+    test_db.refresh(messager)
+    return messager
+
+
+def test_update_user_im_binding_preserves_agent_bindings(
+    test_db,
+    test_user,
+):
+    """Test that update_user_im_binding preserves private_team_id and group_bindings.
+
+    This is a regression test for a bug where sending a message would
+    cause agent bindings to be lost because update_user_im_binding
+    was overwriting the entire im_channels entry instead of merging.
+    """
+    import json
+
+    # Create a messager channel for testing
+    messager_channel = _create_messager_kind(test_db)
+
+    # Set up user with existing agent bindings
+    test_user.preferences = json.dumps(
+        {
+            "im_channels": {
+                str(messager_channel.id): {
+                    "channel_type": "dingtalk",
+                    "private_team_id": 123,  # User has bound a private team
+                    "group_bindings": [  # User has bound some groups
+                        {
+                            "conversation_id": "cid_group1",
+                            "group_name": "Test Group",
+                            "team_id": 456,
+                            "bound_at": "2026-04-16T10:00:00+00:00",
+                        }
+                    ],
+                    "other_custom_data": "should_be_preserved",
+                }
+            }
+        }
+    )
+    test_db.commit()
+
+    # Call update_user_im_binding (this happens when user sends a message)
+    subscription_notification_service.update_user_im_binding(
+        db=test_db,
+        user_id=test_user.id,
+        channel_id=messager_channel.id,
+        channel_type="dingtalk",
+        sender_id="sender123",
+        sender_staff_id="staff456",
+        conversation_id="conv789",
+    )
+
+    # Refresh user from DB
+    test_db.refresh(test_user)
+
+    # Verify preferences
+    prefs = json.loads(test_user.preferences or "{}")
+    im_channels = prefs.get("im_channels", {})
+    channel_data = im_channels.get(str(messager_channel.id), {})
+
+    # Agent bindings should be preserved
+    assert (
+        channel_data.get("private_team_id") == 123
+    ), f"private_team_id should be preserved, got {channel_data.get('private_team_id')}"
+
+    assert (
+        len(channel_data.get("group_bindings", [])) == 1
+    ), f"group_bindings should be preserved, got {channel_data.get('group_bindings')}"
+    assert (
+        channel_data["group_bindings"][0]["conversation_id"] == "cid_group1"
+    ), "group binding data should be intact"
+
+    # New data should be added
+    assert channel_data.get("sender_id") == "sender123"
+    assert channel_data.get("sender_staff_id") == "staff456"
+    assert channel_data.get("last_conversation_id") == "conv789"
+    assert "last_active_at" in channel_data
+
+    # Other custom data should also be preserved
+    assert channel_data.get("other_custom_data") == "should_be_preserved"
+
+    print("✓ Agent bindings preserved after message update")

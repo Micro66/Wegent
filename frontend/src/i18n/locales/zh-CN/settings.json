@@ -92,6 +92,7 @@
     "private_team_updated": "私聊智能体已更新",
     "update_failed": "更新失败",
     "group_removed": "群组绑定已移除",
+    "group_binding_updated": "群组绑定已更新",
     "remove_failed": "移除失败",
     "start_session_failed": "启动绑定会话失败",
     "binding_failed": "绑定失败",
@@ -118,7 +119,15 @@
       "group": "群组",
       "unbind": "解绑",
       "bind_to_private": "绑定到私聊",
-      "no_bindings_available": "暂无可用的绑定选项"
+      "bind_to_group": "绑定到群聊",
+      "no_bindings_available": "暂无可用的绑定选项",
+      "unknown_team": "未知智能体",
+      "bound_to_current": "已绑定当前",
+      "bound_to_other": "已绑定: {{team}}",
+      "click_to_bind": "点击绑定",
+      "switch_binding_title": "切换群聊绑定",
+      "switch_binding_message": "群聊 \"{{group_name}}\" 当前已绑定到 \"{{current_team}}\"，是否切换到当前智能体？",
+      "confirm_switch": "确认切换"
     }
   },
   "bot": {

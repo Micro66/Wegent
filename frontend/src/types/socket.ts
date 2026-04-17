@@ -66,6 +66,9 @@ export const ServerEvents = {
   BACKGROUND_EXECUTION_UPDATE: 'background:execution_update',
   SUBSCRIPTION_GROUP_BINDING_UPDATED: 'subscription:group_binding_updated',
 
+  // IM Channel Binding events (to user room)
+  IM_GROUP_DISCOVERED: 'im:group_discovered',
+
   // Generic Skill Events
   SKILL_REQUEST: 'skill:request', // Server -> Client: generic skill request
 
@@ -485,6 +488,17 @@ export interface SubscriptionGroupBindingUpdatedPayload {
   group_bound: boolean
   completed: boolean
   status: 'success' | 'partial'
+}
+
+// ============================================================
+// IM Channel Binding Event Payloads
+// ============================================================
+
+/** Payload for im:group_discovered event */
+export interface IMGroupDiscoveredPayload {
+  channel_id: number
+  conversation_id: string
+  group_name: string
 }
 
 // ============================================================

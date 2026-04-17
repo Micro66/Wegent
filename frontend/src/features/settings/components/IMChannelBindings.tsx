@@ -4,11 +4,13 @@
 
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useToast } from '@/hooks/use-toast'
 import { userApis } from '@/apis/user'
 import { teamApis } from '@/apis/team'
+import { useSocket } from '@/contexts/SocketContext'
+import { ServerEvents, type IMGroupDiscoveredPayload } from '@/types/socket'
 import type { IMChannelUserBinding, Team } from '@/types/api'
 import { Button } from '@/components/ui/button'
 import {
@@ -55,6 +57,7 @@ interface DiscoveredGroup {
 export default function IMChannelBindings() {
   const { t } = useTranslation('settings')
   const { toast } = useToast()
+  const { socket } = useSocket()
 
   // Data states
   const [bindings, setBindings] = useState<IMChannelUserBinding[]>([])
@@ -69,9 +72,6 @@ export default function IMChannelBindings() {
   const [discoveredGroup, setDiscoveredGroup] = useState<DiscoveredGroup | null>(null)
   const [selectedTeamId, setSelectedTeamId] = useState<string>('')
   const [isProcessing, setIsProcessing] = useState(false)
-
-  // WebSocket ref for binding session
-  const [wsConnection, setWsConnection] = useState<WebSocket | null>(null)
 
   // Fetch bindings and teams on mount
   useEffect(() => {
@@ -161,19 +161,74 @@ export default function IMChannelBindings() {
     setIsDialogOpen(true)
   }
 
+  // Listen for IM group discovered event via Socket.IO
+  useEffect(() => {
+    console.log('[IMBinding] Socket.IO useEffect triggered:', {
+      hasSocket: !!socket,
+      isDialogOpen,
+      bindingStep,
+      currentChannelId,
+      socketConnected: socket?.connected,
+    })
+
+    // Always set up listener when dialog is open, regardless of binding step
+    // This ensures we don't miss events due to race conditions
+    if (!socket || !isDialogOpen || currentChannelId === null) {
+      console.log('[IMBinding] Skipping event listener setup - conditions not met')
+      return
+    }
+
+    console.log('[IMBinding] Setting up Socket.IO listener for im:group_discovered')
+
+    const handleGroupDiscovered = (payload: IMGroupDiscoveredPayload) => {
+      console.log('[IMBinding] Received im:group_discovered event:', payload)
+      console.log(
+        '[IMBinding] Current channelId:',
+        currentChannelId,
+        'Payload channelId:',
+        payload.channel_id
+      )
+      console.log('[IMBinding] Current bindingStep:', bindingStep)
+
+      // Accept the event if channel_id matches, regardless of current binding step
+      // This handles race conditions where event arrives before state updates
+      if (payload.channel_id === currentChannelId) {
+        console.log('[IMBinding] Channel ID matches, updating state')
+        setDiscoveredGroup({
+          conversation_id: payload.conversation_id,
+          group_name: payload.group_name,
+        })
+        setBindingStep('select_team')
+      } else {
+        console.log('[IMBinding] Channel ID mismatch, ignoring event')
+      }
+    }
+
+    socket.on(ServerEvents.IM_GROUP_DISCOVERED, handleGroupDiscovered)
+    console.log('[IMBinding] Socket.IO listener registered')
+
+    return () => {
+      console.log('[IMBinding] Cleaning up Socket.IO listener')
+      socket.off(ServerEvents.IM_GROUP_DISCOVERED, handleGroupDiscovered)
+    }
+  }, [socket, isDialogOpen, bindingStep, currentChannelId])
+
   // Start waiting for group message
   const startWaitingForGroup = async () => {
-    if (currentChannelId === null) return
+    if (currentChannelId === null) {
+      console.log('[IMBinding] startWaitingForGroup: currentChannelId is null')
+      return
+    }
 
+    console.log('[IMBinding] Starting binding session for channel:', currentChannelId)
     setIsProcessing(true)
     try {
+      console.log('[IMBinding] Calling startIMBindingSession API')
       await userApis.startIMBindingSession(currentChannelId)
+      console.log('[IMBinding] startIMBindingSession API success, setting step to waiting')
       setBindingStep('waiting')
-
-      // Connect to WebSocket for real-time updates
-      connectWebSocket(currentChannelId)
     } catch (error) {
-      console.error('Failed to start binding session:', error)
+      console.error('[IMBinding] Failed to start binding session:', error)
       toast({
         variant: 'destructive',
         title: t('im_bindings.start_session_failed'),
@@ -183,46 +238,6 @@ export default function IMChannelBindings() {
     }
   }
 
-  // Connect to WebSocket
-  const connectWebSocket = useCallback((channelId: number) => {
-    // Get the WebSocket URL from the current window location
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const wsUrl = `${protocol}//${window.location.host}/api/v1/ws/im-binding?channel_id=${channelId}`
-
-    const ws = new WebSocket(wsUrl)
-
-    ws.onopen = () => {
-      console.log('WebSocket connected for IM binding')
-    }
-
-    ws.onmessage = event => {
-      try {
-        const data = JSON.parse(event.data)
-        if (data.type === 'group_discovered') {
-          setDiscoveredGroup({
-            conversation_id: data.conversation_id,
-            group_name: data.group_name,
-          })
-          setBindingStep('select_team')
-          // Close WebSocket after receiving group info
-          ws.close()
-        }
-      } catch (error) {
-        console.error('Failed to parse WebSocket message:', error)
-      }
-    }
-
-    ws.onerror = error => {
-      console.error('WebSocket error:', error)
-    }
-
-    ws.onclose = () => {
-      console.log('WebSocket closed')
-    }
-
-    setWsConnection(ws)
-  }, [])
-
   // Cancel binding session
   const handleCancelBinding = async () => {
     if (currentChannelId !== null) {
@@ -231,12 +246,6 @@ export default function IMChannelBindings() {
       } catch (error) {
         console.error('Failed to cancel binding session:', error)
       }
-    }
-
-    // Close WebSocket connection
-    if (wsConnection) {
-      wsConnection.close()
-      setWsConnection(null)
     }
 
     setIsDialogOpen(false)
@@ -284,15 +293,6 @@ export default function IMChannelBindings() {
       setIsProcessing(false)
     }
   }
-
-  // Cleanup WebSocket on unmount
-  useEffect(() => {
-    return () => {
-      if (wsConnection) {
-        wsConnection.close()
-      }
-    }
-  }, [wsConnection])
 
   // Get team name by ID
   const getTeamName = (teamId?: number) => {

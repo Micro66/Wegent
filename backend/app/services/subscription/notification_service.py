@@ -537,7 +537,12 @@ class SubscriptionNotificationService:
             preferences = {}
 
         im_channels = preferences.get("im_channels", {})
-        im_channels[str(channel_id)] = {
+        channel_id_str = str(channel_id)
+
+        # Merge with existing data to preserve private_team_id and group_bindings
+        existing_data = im_channels.get(channel_id_str, {})
+        im_channels[channel_id_str] = {
+            **existing_data,  # Preserve existing bindings
             "channel_type": channel_type,
             "sender_id": sender_id,
             "sender_staff_id": sender_staff_id,

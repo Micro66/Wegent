@@ -236,9 +236,13 @@ class IMChannelBindingService:
 
         channel_data = prefs["im_channels"][channel_id_str]
 
-        # Update private_team_id if provided
-        if request.private_team_id is not None:
-            channel_data["private_team_id"] = request.private_team_id
+        # Update private_team_id if explicitly provided (including null to unbind)
+        if request.is_private_team_id_set():
+            if request.private_team_id is None:
+                # Explicitly remove the binding
+                channel_data.pop("private_team_id", None)
+            else:
+                channel_data["private_team_id"] = request.private_team_id
 
         # Add or update group binding if provided
         if request.group is not None:
@@ -439,6 +443,11 @@ class IMChannelBindingService:
         session_key = IMChannelBindingService._generate_session_key(user_id, channel_id)
         index_key = IMChannelBindingService._generate_session_index_key(user_id)
 
+        logger.info(
+            f"[IMBinding] Starting binding session: user_id={user_id}, channel_id={channel_id}"
+        )
+        logger.info(f"[IMBinding] Session key: {session_key}, Index key: {index_key}")
+
         session_data = {
             "user_id": user_id,
             "channel_id": channel_id,
@@ -453,6 +462,8 @@ class IMChannelBindingService:
                 expire=BINDING_SESSION_TTL,
             )
 
+            logger.info(f"[IMBinding] Cache set result: {result}")
+
             if result:
                 # Add to index for quick lookup
                 await cache_manager.set(
@@ -460,11 +471,66 @@ class IMChannelBindingService:
                     {"channel_id": channel_id, "session_key": session_key},
                     expire=BINDING_SESSION_TTL,
                 )
+                logger.info(f"[IMBinding] Binding session started successfully")
 
             return result
         except Exception as e:
-            logger.error(f"Failed to start binding session: {e}")
+            logger.error(
+                f"[IMBinding] Failed to start binding session: {e}", exc_info=True
+            )
             return False
+
+    @staticmethod
+    async def _emit_group_discovered(
+        user_id: int,
+        channel_id: int,
+        conversation_id: str,
+        group_name: str,
+    ) -> None:
+        """Emit im:group_discovered WebSocket event to notify frontend.
+
+        Args:
+            user_id: User ID
+            channel_id: Channel ID
+            conversation_id: Group conversation ID
+            group_name: Display name of the group
+        """
+        try:
+            import json
+
+            import redis
+
+            from app.core.config import settings
+
+            logger.info(
+                f"[IMBinding] Emitting group_discovered: user_id={user_id}, channel_id={channel_id}, conversation_id={conversation_id}, group_name={group_name}"
+            )
+
+            redis_client = redis.from_url(settings.REDIS_URL, decode_responses=False)
+            payload = {
+                "channel_id": channel_id,
+                "conversation_id": conversation_id,
+                "group_name": group_name,
+            }
+            socketio_message = {
+                "method": "emit",
+                "event": "im:group_discovered",
+                "data": [payload],
+                "namespace": "/chat",
+                "room": f"user:{user_id}",
+            }
+            message_json = json.dumps(socketio_message)
+            logger.info(f"[IMBinding] Redis message payload: {message_json}")
+            result = redis_client.publish("socketio", message_json)
+            redis_client.close()
+            logger.info(
+                f"[IMBinding] Published im:group_discovered to user:{user_id} "
+                f"for channel_id={channel_id}, group_name={group_name}, redis_result={result}"
+            )
+        except Exception as e:
+            logger.error(
+                f"[IMBinding] Failed to publish im:group_discovered: {e}", exc_info=True
+            )
 
     @staticmethod
     async def cancel_binding_session(
@@ -508,12 +574,18 @@ class IMChannelBindingService:
             Session data or None if not found/expired
         """
         session_key = IMChannelBindingService._generate_session_key(user_id, channel_id)
+        logger.info(
+            f"[IMBinding] Getting binding session: user_id={user_id}, channel_id={channel_id}, key={session_key}"
+        )
 
         try:
             data = await cache_manager.get(session_key)
+            logger.info(f"[IMBinding] Binding session data: {data}")
             return data
         except Exception as e:
-            logger.error(f"Failed to get binding session: {e}")
+            logger.error(
+                f"[IMBinding] Failed to get binding session: {e}", exc_info=True
+            )
             return None
 
     @staticmethod
@@ -541,13 +613,19 @@ class IMChannelBindingService:
         Returns:
             Updated IMChannelUserBinding or None if failed
         """
+        logger.info(
+            f"[IMBinding] handle_binding_from_message called: user_id={user_id}, channel_id={channel_id}, conversation_id={conversation_id}, group_name={group_name}, team_id={team_id}"
+        )
+
         # Check if session exists
         session = await IMChannelBindingService.get_binding_session(user_id, channel_id)
         if not session:
             logger.warning(
-                f"No active binding session for user {user_id}, channel {channel_id}"
+                f"[IMBinding] No active binding session for user {user_id}, channel {channel_id}"
             )
             return None
+
+        logger.info(f"[IMBinding] Found active binding session: {session}")
 
         # Create group binding request
         group_binding = IMGroupBinding(
@@ -573,6 +651,13 @@ class IMChannelBindingService:
             logger.info(
                 f"Created group binding for user {user_id}, channel {channel_id}, "
                 f"conversation {conversation_id}, team {team_id}"
+            )
+            # Emit WebSocket event to notify frontend
+            await IMChannelBindingService._emit_group_discovered(
+                user_id=user_id,
+                channel_id=channel_id,
+                conversation_id=conversation_id,
+                group_name=group_name,
             )
 
         return result

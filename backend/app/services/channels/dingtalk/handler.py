@@ -29,6 +29,9 @@ from sqlalchemy.orm import Session
 from app.core.cache import cache_manager
 from app.db.session import SessionLocal
 from app.models.user import User
+from app.services.channels.binding_service import (
+    binding_service as im_channel_binding_service,
+)
 from app.services.channels.callback import BaseChannelCallbackService, ChannelType
 from app.services.channels.dingtalk.callback import (
     DingTalkCallbackInfo,
@@ -700,11 +703,49 @@ class WegentChatbotHandler(dingtalk_stream.ChatbotHandler):
                             group_name=group_name,
                         )
                         self.logger.info(
-                            "[DingTalkHandler] Binding check result: user_id=%s, channel_id=%s, result=%s",
+                            "[DingTalkHandler] Subscription binding check result: user_id=%s, channel_id=%s, result=%s",
                             user.id,
                             self._channel_id,
                             binding_result,
                         )
+
+                        # Also check for IM Channel Agent Binding (new system)
+                        self.logger.info(
+                            "[DingTalkHandler] Checking IM Channel Agent Binding: user_id=%s, channel_id=%s, conversation_id=%s, group_name=%s",
+                            user.id,
+                            self._channel_id,
+                            message_context.conversation_id,
+                            group_name,
+                        )
+                        im_binding_session = (
+                            await im_channel_binding_service.get_binding_session(
+                                user_id=user.id,
+                                channel_id=self._channel_id,
+                            )
+                        )
+                        self.logger.info(
+                            "[DingTalkHandler] IM binding session: %s",
+                            im_binding_session,
+                        )
+                        if (
+                            im_binding_session
+                            and message_context.conversation_type == "group"
+                        ):
+                            self.logger.info(
+                                "[DingTalkHandler] Found IM binding session, calling handle_binding_from_message"
+                            )
+                            im_binding_result = await im_channel_binding_service.handle_binding_from_message(
+                                db=db,
+                                user_id=user.id,
+                                channel_id=self._channel_id,
+                                conversation_id=message_context.conversation_id,
+                                group_name=group_name or "Group Chat",
+                                team_id=0,  # User will select team in UI
+                            )
+                            self.logger.info(
+                                "[DingTalkHandler] IM binding result: %s",
+                                im_binding_result,
+                            )
 
                         # Resolve team using binding service with conversation context
                         # This enables group chat binding - different teams for different groups

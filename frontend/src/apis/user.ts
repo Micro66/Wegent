@@ -252,7 +252,7 @@ export const userApis = {
    */
   async updateIMBinding(
     channelId: number,
-    data: { private_team_id?: number; group?: IMGroupBinding }
+    data: { private_team_id?: number | null; group?: IMGroupBinding }
   ): Promise<IMChannelUserBinding> {
     return apiClient.put(`/users/me/im-bindings/${channelId}`, data)
   },
@@ -265,7 +265,7 @@ export const userApis = {
     conversationId: string
   ): Promise<IMChannelUserBinding> {
     return apiClient.delete(
-      `/users/me/im-bindings/${channelId}/groups/${encodeURIComponent(conversationId)}`
+      `/users/me/im-bindings/${channelId}/groups?conversation_id=${encodeURIComponent(conversationId)}`
     )
   },
 

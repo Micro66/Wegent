@@ -229,7 +229,7 @@ class TestDeleteGroupBinding:
         test_db.commit()
 
         response = im_bindings_client.delete(
-            f"/api/users/me/im-bindings/{sample_messager_channel.id}/groups/cid_delete_me"
+            f"/api/users/me/im-bindings/{sample_messager_channel.id}/groups?conversation_id=cid_delete_me"
         )
 
         assert response.status_code == 200
@@ -249,7 +249,7 @@ class TestDeleteGroupBinding:
         test_db.commit()
 
         response = im_bindings_client.delete(
-            f"/api/users/me/im-bindings/{sample_messager_channel.id}/groups/cid_nonexistent"
+            f"/api/users/me/im-bindings/{sample_messager_channel.id}/groups?conversation_id=cid_nonexistent"
         )
 
         assert response.status_code == 404
@@ -338,3 +338,36 @@ class TestCancelBindingSession:
 
             assert response.status_code == 500
             assert "failed" in response.json()["detail"].lower()
+
+    def test_update_private_team_id_to_null(
+        self,
+        im_bindings_client: TestClient,
+        test_db: Session,
+        test_user: User,
+        sample_messager_channel: Kind,
+    ):
+        """Test unbinding private team by setting it to null."""
+        # First set a binding
+        test_user.preferences = json.dumps(
+            {
+                "im_channels": {
+                    str(sample_messager_channel.id): {
+                        "channel_type": "dingtalk",
+                        "private_team_id": 100,
+                        "group_bindings": [],
+                    }
+                }
+            }
+        )
+        test_db.commit()
+
+        # Now unbind by setting to null
+        response = im_bindings_client.put(
+            f"/api/users/me/im-bindings/{sample_messager_channel.id}",
+            json={"private_team_id": None},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["channel_id"] == sample_messager_channel.id
+        assert data["private_team_id"] is None

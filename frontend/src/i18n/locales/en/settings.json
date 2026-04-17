@@ -92,6 +92,7 @@
     "private_team_updated": "Private agent updated",
     "update_failed": "Update failed",
     "group_removed": "Group binding removed",
+    "group_binding_updated": "Group binding updated",
     "remove_failed": "Remove failed",
     "start_session_failed": "Failed to start binding session",
     "binding_failed": "Binding failed",
@@ -118,7 +119,15 @@
       "group": "Group",
       "unbind": "Unbind",
       "bind_to_private": "Bind to Private",
-      "no_bindings_available": "No binding options available"
+      "bind_to_group": "Bind to Group",
+      "no_bindings_available": "No binding options available",
+      "unknown_team": "Unknown Agent",
+      "bound_to_current": "Bound to Current",
+      "bound_to_other": "Bound to: {{team}}",
+      "click_to_bind": "Click to Bind",
+      "switch_binding_title": "Switch Group Binding",
+      "switch_binding_message": "Group \"{{group_name}}\" is currently bound to \"{{current_team}}\". Switch to current agent?",
+      "confirm_switch": "Confirm Switch"
     }
   },
   "bot": {

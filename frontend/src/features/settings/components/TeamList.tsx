@@ -75,7 +75,7 @@ export default function TeamList({
   groupRoleMap,
   onEditResource,
 }: TeamListProps) {
-  const { t } = useTranslation(['common', 'wizard'])
+  const { t } = useTranslation(['common', 'wizard', 'settings'])
   const { toast } = useToast()
   const [teams, setTeams] = useState<Team[]>([])
   const [bots, setBots] = useState<Bot[]>([])
@@ -99,6 +99,23 @@ export default function TeamList({
   const [imBindings, setImBindings] = useState<IMChannelUserBinding[]>([])
   const [isLoadingBindings, setIsLoadingBindings] = useState(false)
   const router = useRouter()
+
+  // Switch binding confirmation dialog state
+  const [switchBindingDialog, setSwitchBindingDialog] = useState<{
+    open: boolean
+    channelId: number
+    conversationId: string
+    groupName: string
+    currentTeamName: string | null
+    newTeamId: number
+  }>({
+    open: false,
+    channelId: 0,
+    conversationId: '',
+    groupName: '',
+    currentTeamName: null,
+    newTeamId: 0,
+  })
 
   const setTeamsSorted = useCallback<React.Dispatch<React.SetStateAction<Team[]>>>(
     updater => {
@@ -135,7 +152,7 @@ export default function TeamList({
       } catch {
         toast({
           variant: 'destructive',
-          title: t('teams.loading'),
+          title: t('common:teams.loading'),
         })
       } finally {
         setIsLoading(false)
@@ -179,7 +196,7 @@ export default function TeamList({
   // Handle unbind from private
   const handleUnbindPrivate = async (channelId: number) => {
     try {
-      await userApis.updateIMBinding(channelId, { private_team_id: undefined })
+      await userApis.updateIMBinding(channelId, { private_team_id: null })
       // Update local state
       setImBindings(prev =>
         prev.map(binding =>
@@ -249,6 +266,61 @@ export default function TeamList({
     }
   }
 
+  // Handle bind/switch group binding
+  const handleBindToGroup = async (
+    channelId: number,
+    conversationId: string,
+    teamId: number,
+    groupName: string
+  ) => {
+    try {
+      await userApis.updateIMBinding(channelId, {
+        group: {
+          conversation_id: conversationId,
+          group_name: groupName,
+          team_id: teamId,
+        },
+      })
+      // Refresh bindings to get updated data
+      const bindings = await userApis.getMyIMBindings()
+      setImBindings(bindings)
+      toast({
+        title: t('settings:im_bindings.group_binding_updated'),
+      })
+    } catch (error) {
+      console.error('Failed to bind group:', error)
+      toast({
+        variant: 'destructive',
+        title: t('settings:im_bindings.binding_failed'),
+      })
+    }
+  }
+
+  // Open switch binding confirmation dialog
+  const openSwitchBindingDialog = (
+    channelId: number,
+    conversationId: string,
+    groupName: string,
+    currentTeamName: string | null,
+    newTeamId: number
+  ) => {
+    setSwitchBindingDialog({
+      open: true,
+      channelId,
+      conversationId,
+      groupName,
+      currentTeamName,
+      newTeamId,
+    })
+  }
+
+  // Confirm switch binding
+  const confirmSwitchBinding = async () => {
+    const { channelId, conversationId, newTeamId, groupName } = switchBindingDialog
+    await handleBindToGroup(channelId, conversationId, newTeamId, groupName)
+    setSwitchBindingDialog(prev => ({ ...prev, open: false }))
+  }
+
   useEffect(() => {
     if (editingTeamId === null) {
       setPrefillTeam(null)
@@ -260,8 +332,8 @@ export default function TeamList({
     if (scope === 'group' && !groupName) {
       toast({
         variant: 'destructive',
-        title: t('teams.group_required_title'),
-        description: t('teams.group_required_message'),
+        title: t('common:teams.group_required_title'),
+        description: t('common:teams.group_required_message'),
       })
       return
     }
@@ -314,8 +386,8 @@ export default function TeamList({
     if (scope === 'group' && !groupName) {
       toast({
         variant: 'destructive',
-        title: t('teams.group_required_title'),
-        description: t('teams.group_required_message'),
+        title: t('common:teams.group_required_title'),
+        description: t('common:teams.group_required_message'),
       })
       return
     }
@@ -426,7 +498,7 @@ export default function TeamList({
     } catch {
       toast({
         variant: 'destructive',
-        title: t('teams.delete'),
+        title: t('common:teams.delete'),
       })
     } finally {
       setIsDeleting(false)
@@ -446,7 +518,7 @@ export default function TeamList({
     } catch {
       toast({
         variant: 'destructive',
-        title: t('teams.delete'),
+        title: t('common:teams.delete'),
       })
     } finally {
       setIsDeleting(false)
@@ -475,7 +547,7 @@ export default function TeamList({
     } catch {
       toast({
         variant: 'destructive',
-        title: t('teams.share_failed'),
+        title: t('common:teams.share_failed'),
       })
     } finally {
       setSharingId(null)
@@ -537,8 +609,10 @@ export default function TeamList({
     <>
       <div className="flex flex-col h-full min-h-0 overflow-hidden w-full max-w-full">
         <div className="flex-shrink-0 mb-3">
-          <h2 className="text-xl font-semibold text-text-primary mb-1">{t('teams.title')}</h2>
-          <p className="text-sm text-text-muted mb-1">{t('teams.description')}</p>
+          <h2 className="text-xl font-semibold text-text-primary mb-1">
+            {t('common:teams.title')}
+          </h2>
+          <p className="text-sm text-text-muted mb-1">{t('common:teams.description')}</p>
         </div>
         <div className="bg-base border border-border rounded-md p-2 w-full max-w-full overflow-hidden max-h-[70vh] flex flex-col overflow-y-auto custom-scrollbar">
           {/* Mode filter tabs */}
@@ -552,7 +626,7 @@ export default function TeamList({
                   : 'bg-muted text-text-secondary hover:text-text-primary hover:bg-hover'
               }`}
             >
-              {t('teams.filter_all')}
+              {t('common:teams.filter_all')}
             </button>
             <button
               type="button"
@@ -564,7 +638,7 @@ export default function TeamList({
               }`}
             >
               <ChatBubbleLeftEllipsisIcon className="w-4 h-4" />
-              {t('teams.filter_chat')}
+              {t('common:teams.filter_chat')}
             </button>
             <button
               type="button"
@@ -576,11 +650,11 @@ export default function TeamList({
               }`}
             >
               <CodeBracketIcon className="w-4 h-4" />
-              {t('teams.filter_code')}
+              {t('common:teams.filter_code')}
             </button>
           </div>
           {isLoading ? (
-            <LoadingState fullScreen={false} message={t('teams.loading')} />
+            <LoadingState fullScreen={false} message={t('common:teams.loading')} />
           ) : (
             <>
               <div className="flex-1 overflow-y-auto overflow-x-hidden custom-scrollbar space-y-3 p-1">
@@ -606,7 +680,7 @@ export default function TeamList({
                               ? [
                                   {
                                     key: 'public',
-                                    label: t('teams.public'),
+                                    label: t('common:teams.public'),
                                     variant: 'default' as const,
                                   },
                                 ]
@@ -625,7 +699,7 @@ export default function TeamList({
                               ? [
                                   {
                                     key: 'sharing',
-                                    label: t('teams.sharing'),
+                                    label: t('common:teams.sharing'),
                                     variant: 'info' as const,
                                   },
                                 ]
@@ -634,7 +708,7 @@ export default function TeamList({
                               ? [
                                   {
                                     key: 'shared',
-                                    label: t('teams.shared_by', {
+                                    label: t('common:teams.shared_by', {
                                       author: team.user.user_name,
                                     }),
                                     variant: 'success' as const,
@@ -663,7 +737,9 @@ export default function TeamList({
                               }}
                             ></div>
                             <span className="text-xs text-text-muted">
-                              {team.is_active ? t('teams.active') : t('teams.inactive')}
+                              {team.is_active
+                                ? t('common:teams.active')
+                                : t('common:teams.inactive')}
                             </span>
                           </div>
                         </ResourceListItem>
@@ -674,8 +750,8 @@ export default function TeamList({
                             onClick={() => handleChatTeam(team)}
                             title={
                               getTargetPage(team) === 'code'
-                                ? t('teams.go_to_code')
-                                : t('teams.go_to_chat')
+                                ? t('common:teams.go_to_code')
+                                : t('common:teams.go_to_chat')
                             }
                             className="h-7 w-7 sm:h-8 sm:w-8"
                           >
@@ -690,7 +766,7 @@ export default function TeamList({
                               variant="ghost"
                               size="icon"
                               onClick={() => handleEditTeam(team)}
-                              title={t('teams.edit')}
+                              title={t('common:teams.edit')}
                               className="h-7 w-7 sm:h-8 sm:w-8"
                             >
                               <PencilIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
@@ -701,7 +777,7 @@ export default function TeamList({
                               variant="ghost"
                               size="icon"
                               onClick={() => handleCopyTeam(team)}
-                              title={t('teams.copy')}
+                              title={t('common:teams.copy')}
                               className="h-7 w-7 sm:h-8 sm:w-8"
                             >
                               <DocumentDuplicateIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
@@ -712,7 +788,7 @@ export default function TeamList({
                               variant="ghost"
                               size="icon"
                               onClick={() => handleShareTeam(team)}
-                              title={t('teams.share.title')}
+                              title={t('common:teams.share.title')}
                               className="h-7 w-7 sm:h-8 sm:w-8"
                               disabled={sharingId === team.id}
                             >
@@ -761,7 +837,7 @@ export default function TeamList({
                                       {hasBindings ? (
                                         <>
                                           <div className="px-2 py-1.5 text-xs text-text-muted">
-                                            {t('teams.bindings.current_bindings')}
+                                            {t('settings:teams.bindings.current_bindings')}
                                           </div>
                                           {/* Private binding */}
                                           {privateBinding && (
@@ -773,10 +849,10 @@ export default function TeamList({
                                             >
                                               <span className="truncate">
                                                 {privateBinding.channel_name} (
-                                                {t('teams.bindings.private')})
+                                                {t('settings:teams.bindings.private')})
                                               </span>
                                               <span className="text-xs text-error ml-2">
-                                                {t('teams.bindings.unbind')}
+                                                {t('settings:teams.bindings.unbind')}
                                               </span>
                                             </DropdownMenuItem>
                                           )}
@@ -793,10 +869,11 @@ export default function TeamList({
                                               className="flex items-center justify-between"
                                             >
                                               <span className="truncate">
-                                                {group.group_name} ({t('teams.bindings.group')})
+                                                {group.group_name} (
+                                                {t('settings:teams.bindings.group')})
                                               </span>
                                               <span className="text-xs text-error ml-2">
-                                                {t('teams.bindings.unbind')}
+                                                {t('settings:teams.bindings.unbind')}
                                               </span>
                                             </DropdownMenuItem>
                                           ))}
@@ -813,7 +890,7 @@ export default function TeamList({
                                         return (
                                           <>
                                             <div className="px-2 py-1.5 text-xs text-text-muted">
-                                              {t('teams.bindings.bind_to_private')}
+                                              {t('settings:teams.bindings.bind_to_private')}
                                             </div>
                                             {availableChannels.map(channel => (
                                               <DropdownMenuItem
@@ -831,10 +908,105 @@ export default function TeamList({
                                         )
                                       })()}
 
+                                      {/* Bind to Group Section */}
+                                      {(() => {
+                                        // Get all channels that have groups (bound or unbound)
+                                        const channelsWithGroups = imBindings.filter(
+                                          binding => binding.group_bindings.length > 0
+                                        )
+                                        if (channelsWithGroups.length === 0) return null
+
+                                        return (
+                                          <>
+                                            <DropdownMenuSeparator />
+                                            <div className="px-2 py-1.5 text-xs text-text-muted">
+                                              {t('settings:teams.bindings.bind_to_group')}
+                                            </div>
+                                            {channelsWithGroups.map(channel => (
+                                              <div key={channel.channel_id}>
+                                                <div className="px-2 py-1 text-xs font-medium text-text-secondary">
+                                                  {channel.channel_name}
+                                                </div>
+                                                {channel.group_bindings.map(group => {
+                                                  const isBoundToCurrent = group.team_id === team.id
+                                                  const boundTeam = teams.find(
+                                                    t => t.id === group.team_id
+                                                  )
+                                                  const boundTeamName =
+                                                    boundTeam?.name ||
+                                                    t('settings:teams.bindings.unknown_team')
+
+                                                  return (
+                                                    <DropdownMenuItem
+                                                      key={group.conversation_id}
+                                                      onClick={() => {
+                                                        if (isBoundToCurrent) {
+                                                          // Already bound to current, do nothing or show unbind
+                                                          handleUnbindGroup(
+                                                            channel.channel_id,
+                                                            group.conversation_id
+                                                          )
+                                                        } else if (group.team_id) {
+                                                          // Bound to another team, show switch confirmation
+                                                          openSwitchBindingDialog(
+                                                            channel.channel_id,
+                                                            group.conversation_id,
+                                                            group.group_name,
+                                                            boundTeamName,
+                                                            team.id
+                                                          )
+                                                        } else {
+                                                          // Not bound, bind directly
+                                                          handleBindToGroup(
+                                                            channel.channel_id,
+                                                            group.conversation_id,
+                                                            team.id,
+                                                            group.group_name
+                                                          )
+                                                        }
+                                                      }}
+                                                      className="flex items-center justify-between"
+                                                    >
+                                                      <span className="truncate">
+                                                        {group.group_name}
+                                                      </span>
+                                                      <span className="text-xs ml-2 flex-shrink-0">
+                                                        {isBoundToCurrent ? (
+                                                          <span className="text-success">
+                                                            ✓{' '}
+                                                            {t(
+                                                              'settings:teams.bindings.bound_to_current'
+                                                            )}
+                                                          </span>
+                                                        ) : group.team_id ? (
+                                                          <span className="text-text-muted">
+                                                            {t(
+                                                              'settings:teams.bindings.bound_to_other',
+                                                              { team: boundTeamName }
+                                                            )}
+                                                          </span>
+                                                        ) : (
+                                                          <span className="text-primary">
+                                                            {t(
+                                                              'settings:teams.bindings.click_to_bind'
+                                                            )}
+                                                          </span>
+                                                        )}
+                                                      </span>
+                                                    </DropdownMenuItem>
+                                                  )
+                                                })}
+                                              </div>
+                                            ))}
+                                          </>
+                                        )
+                                      })()}
+
                                       {!hasBindings &&
-                                        getAvailableChannelsForBinding(team.id).length === 0 && (
+                                        getAvailableChannelsForBinding(team.id).length === 0 &&
+                                        imBindings.every(b => b.group_bindings.length === 0) && (
                                           <div className="px-2 py-1.5 text-xs text-text-muted">
-                                            {t('teams.bindings.no_bindings_available')}
+                                            {t('settings:teams.bindings.no_bindings_available')}
                                           </div>
                                         )}
                                     </>
@@ -849,7 +1021,11 @@ export default function TeamList({
                               size="icon"
                               onClick={() => handleDelete(team.id)}
                               disabled={isCheckingTasks}
-                              title={isSharedTeam(team) ? t('teams.unbind') : t('teams.delete')}
+                              title={
+                                isSharedTeam(team)
+                                  ? t('common:teams.unbind')
+                                  : t('common:teams.delete')
+                              }
                               className="h-7 w-7 sm:h-8 sm:w-8 hover:text-error"
                             >
                               {isSharedTeam(team) ? (
@@ -865,7 +1041,7 @@ export default function TeamList({
                   ))
                 ) : (
                   <div className="text-center text-text-muted py-8">
-                    <p className="text-sm">{t('teams.no_teams')}</p>
+                    <p className="text-sm">{t('common:teams.no_teams')}</p>
                   </div>
                 )}
               </div>
@@ -873,7 +1049,7 @@ export default function TeamList({
                 <div className="flex justify-center gap-3">
                   {(scope === 'personal' || canCreateInCurrentGroup) && (
                     <UnifiedAddButton onClick={handleCreateTeam}>
-                      {t('teams.new_team')}
+                      {t('common:teams.new_team')}
                     </UnifiedAddButton>
                   )}
                   {(scope === 'personal' || canCreateInCurrentGroup) && (
@@ -934,13 +1110,13 @@ export default function TeamList({
           <DialogHeader>
             <DialogTitle>
               {isUnbindingSharedTeam
-                ? t('teams.unbind_confirm_title')
-                : t('teams.delete_confirm_title')}
+                ? t('common:teams.unbind_confirm_title')
+                : t('common:teams.delete_confirm_title')}
             </DialogTitle>
             <DialogDescription>
               {isUnbindingSharedTeam
-                ? t('teams.unbind_confirm_message')
-                : t('teams.delete_confirm_message')}
+                ? t('common:teams.unbind_confirm_message')
+                : t('common:teams.delete_confirm_message')}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -987,20 +1163,20 @@ export default function TeamList({
       >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>{t('teams.force_delete_confirm_title')}</DialogTitle>
+            <DialogTitle>{t('common:teams.force_delete_confirm_title')}</DialogTitle>
             <DialogDescription>
-              {t('teams.force_delete_confirm_message', {
+              {t('common:teams.force_delete_confirm_message', {
                 count: runningTasksInfo?.running_tasks_count || 0,
               })}
             </DialogDescription>
           </DialogHeader>
           <ForceDeleteTaskSummary
             runningTasks={runningTasksInfo?.running_tasks || []}
-            runningTasksTitle={t('teams.running_tasks_list')}
-            warning={t('teams.force_delete_warning')}
+            runningTasksTitle={t('common:teams.running_tasks_list')}
+            warning={t('common:teams.force_delete_warning')}
             andMoreLabel={
               runningTasksInfo && runningTasksInfo.running_tasks.length > 5
-                ? `... ${t('teams.and_more_tasks', {
+                ? `... ${t('common:teams.and_more_tasks', {
                     count: runningTasksInfo.running_tasks.length - 5,
                   })}`
                 : undefined
@@ -1036,8 +1212,37 @@ export default function TeamList({
                   {t('actions.deleting')}
                 </div>
               ) : (
-                t('teams.force_delete')
+                t('common:teams.force_delete')
               )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Switch binding confirmation dialog */}
+      <Dialog
+        open={switchBindingDialog.open}
+        onOpenChange={open => !open && setSwitchBindingDialog(prev => ({ ...prev, open: false }))}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t('settings:teams.bindings.switch_binding_title')}</DialogTitle>
+            <DialogDescription>
+              {t('settings:teams.bindings.switch_binding_message', {
+                group_name: switchBindingDialog.groupName,
+                current_team: switchBindingDialog.currentTeamName,
+              })}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="secondary"
+              onClick={() => setSwitchBindingDialog(prev => ({ ...prev, open: false }))}
+            >
+              {t('common.cancel')}
+            </Button>
+            <Button variant="primary" onClick={confirmSwitchBinding}>
+              {t('settings:teams.bindings.confirm_switch')}
             </Button>
           </DialogFooter>
         </DialogContent>
