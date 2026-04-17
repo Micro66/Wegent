@@ -305,7 +305,7 @@ def create_new_task(
         },
         "status": {
             "state": "Available",
-            "status": "PENDING",
+            "status": "COMPLETED" if params.is_group_chat else "PENDING",
             "progress": 0,
             "result": None,
             "errorMessage": "",
