@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 
 from app.models.task import TaskResource
 from app.schemas.kind import Task
+from app.services.chat.group_chat_config import get_group_chat_team_refs
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +53,20 @@ def should_trigger_ai_response(
     # Non-group-chat mode: always trigger AI
     if not is_group_chat:
         return True
+
+    configured_team_refs = get_group_chat_team_refs(task_json)
+    if configured_team_refs:
+        configured_team_names = {
+            team_ref.get("name")
+            for team_ref in configured_team_refs
+            if team_ref.get("name")
+        }
+        if configured_team_names and team_name not in configured_team_names:
+            logger.info(
+                "[group_chat] Team %s is not configured for this group chat",
+                team_name,
+            )
+            return False
 
     # Group chat mode: check for @TeamName mention (exact match)
     mention_pattern = f"@{team_name}"

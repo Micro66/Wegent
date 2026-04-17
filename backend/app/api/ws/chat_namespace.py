@@ -62,6 +62,7 @@ from app.services.chat.operations import (
     reset_subtask_for_retry,
     update_subtask_on_cancel,
 )
+from app.services.chat.group_chat_config import get_group_chat_team_refs
 from app.services.chat.rag import process_context_and_rag
 from app.services.chat.storage import session_manager
 from app.services.chat.storage.db import get_db_session, run_sync_in_executor
@@ -586,6 +587,7 @@ class ChatNamespace(socketio.AsyncNamespace):
                 )
                 if existing_task:
                     task_json = existing_task.json or {}
+            allowed_group_chat_team_refs = get_group_chat_team_refs(task_json)
 
             # Check if AI should be triggered (for group chat with @mention)
             # For existing tasks: use task_json.spec.is_group_chat
@@ -600,6 +602,7 @@ class ChatNamespace(socketio.AsyncNamespace):
             logger.info(
                 f"[WS] chat:send group chat check: task_id={payload.task_id}, "
                 f"is_group_chat={task_json.get('spec', {}).get('is_group_chat', False)}, "
+                f"allowed_team_refs={len(allowed_group_chat_team_refs)}, "
                 f"team_name={team_name}, "
                 f"should_trigger_ai={should_trigger_ai}"
             )
