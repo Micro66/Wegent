@@ -5,13 +5,16 @@
 """Utility functions for memory service."""
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List
 
 from sqlalchemy.orm import Session
 
+from app.models.kind import Kind
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
+from app.models.task import TaskResource
 from app.models.user import User
+from app.services.chat.group_chat_config import get_group_chat_history_window
 from app.services.memory.schemas import MemorySearchResult
 from shared.telemetry.context.large_data import log_large_string_list
 from shared.telemetry.decorators import (
@@ -21,6 +24,111 @@ from shared.telemetry.decorators import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _get_group_chat_history_window_for_task(
+    db: Session, task_id: int | None
+) -> dict[str, int] | None:
+    """Load the configured history window for a group chat task."""
+    if task_id is None:
+        return None
+
+    task = (
+        db.query(TaskResource)
+        .filter(
+            TaskResource.id == task_id,
+            TaskResource.kind == "Task",
+            TaskResource.is_active,
+        )
+        .first()
+    )
+    if not task or not isinstance(task.json, dict):
+        return None
+
+    return get_group_chat_history_window(task.json)
+
+
+def _get_subtask_timestamp(subtask: Subtask) -> datetime | None:
+    """Return the best available timestamp for a subtask."""
+    return (
+        getattr(subtask, "created_at", None)
+        or getattr(subtask, "completed_at", None)
+        or getattr(subtask, "updated_at", None)
+    )
+
+
+def _apply_group_chat_history_window_to_subtasks(
+    subtasks: List[Subtask],
+    history_window: dict[str, int] | None,
+) -> List[Subtask]:
+    """Filter group chat subtasks by maxDays and maxMessages."""
+    if not history_window:
+        return subtasks
+
+    max_days = history_window.get("maxDays")
+    max_messages = history_window.get("maxMessages")
+
+    filtered = subtasks
+    if max_days and max_days > 0:
+        cutoff = datetime.now(timezone.utc) - timedelta(days=max_days)
+        filtered = [
+            subtask
+            for subtask in filtered
+            if (timestamp := _get_subtask_timestamp(subtask)) is None
+            or (
+                timestamp.astimezone(timezone.utc)
+                if timestamp.tzinfo
+                else timestamp.replace(tzinfo=timezone.utc)
+            )
+            >= cutoff
+        ]
+
+    if max_messages and max_messages > 0:
+        history_limit = max(max_messages - 1, 0)
+        filtered = filtered[:history_limit]
+
+    return filtered
+
+
+def _get_sender_name(db: Session, sender_user_id: int | None) -> str:
+    """Resolve sender name for group chat formatting."""
+    if not sender_user_id:
+        return "Unknown"
+
+    sender = db.query(User).filter(User.id == sender_user_id).first()
+    if sender and sender.user_name:
+        return sender.user_name
+    return f"User{sender_user_id}"
+
+
+def _get_agent_name(db: Session, team_id: int | None) -> str | None:
+    """Resolve team name for assistant messages in group chat."""
+    if not team_id:
+        return None
+
+    team = (
+        db.query(Kind)
+        .filter(
+            Kind.id == team_id,
+            Kind.kind == "Team",
+            Kind.is_active,
+        )
+        .first()
+    )
+    return team.name if team else None
+
+
+def sanitize_memory_messages(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Strip internal metadata fields before sending messages to the memory service."""
+    sanitized_messages = []
+    for message in messages:
+        sanitized_messages.append(
+            {
+                "role": message.get("role", ""),
+                "content": message.get("content", ""),
+            }
+        )
+    return sanitized_messages
 
 
 @trace_sync("memory.utils.inject_memories")
@@ -212,6 +320,15 @@ def build_context_messages(
         and st.role in (SubtaskRole.USER, SubtaskRole.ASSISTANT)
     ]
 
+    if is_group_chat and completed_subtasks:
+        history_window = _get_group_chat_history_window_for_task(
+            db, completed_subtasks[0].task_id
+        )
+        completed_subtasks = _apply_group_chat_history_window_to_subtasks(
+            completed_subtasks,
+            history_window,
+        )
+
     # Get the last (context_limit - 1) completed messages as history
     history_count = min(context_limit - 1, len(completed_subtasks))
     set_span_attribute("context.history_count", history_count)
@@ -338,14 +455,20 @@ def _format_message_content(
 
     if subtask.role == SubtaskRole.USER:
         # Get sender name from database
-        sender = db.query(User).filter(User.id == subtask.sender_user_id).first()
-        sender_name = sender.user_name if sender else f"User{subtask.sender_user_id}"
+        sender_name = _get_sender_name(db, subtask.sender_user_id)
         prefix = f"User[{sender_name}]: "
         if not content.startswith(prefix):
             return prefix + content
         return content
 
-    # ASSISTANT messages: add AI prefix for clarity in group chat context
+    agent_name = _get_agent_name(db, getattr(subtask, "team_id", None))
+    if agent_name:
+        prefix = f"Agent[{agent_name}]: "
+        if not content.startswith(prefix):
+            return prefix + content
+        return content
+
+    # ASSISTANT messages: fall back to the legacy AI prefix when team name is unavailable
     if not content.startswith("AI: "):
         return f"AI: {content}"
     return content

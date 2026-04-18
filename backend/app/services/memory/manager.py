@@ -18,7 +18,7 @@ from typing import Any, Dict, List, Optional
 from app.core.config import settings
 from app.services.memory.client import LongTermMemoryClient
 from app.services.memory.schemas import MemoryMetadata, MemorySearchResult
-from app.services.memory.utils import inject_memories_to_prompt
+from app.services.memory.utils import inject_memories_to_prompt, sanitize_memory_messages
 from shared.telemetry.decorators import trace_async, trace_sync
 
 logger = logging.getLogger(__name__)
@@ -289,10 +289,12 @@ class MemoryManager:
                 is_group_chat=is_group_chat,
             )
 
+            sanitized_messages = sanitize_memory_messages(messages)
+
             # Call mem0 API with context messages
             result = await self._client.add_memory(
                 user_id=prefixed_user_id,
-                messages=messages,
+                messages=sanitized_messages,
                 metadata=metadata.model_dump(),
             )
 
@@ -314,7 +316,7 @@ class MemoryManager:
                     task_id,
                     subtask_id,
                     project_id or "None",
-                    len(messages),
+                    len(sanitized_messages),
                 )
 
                 # Publish event for pet experience update (decoupled from pet module)

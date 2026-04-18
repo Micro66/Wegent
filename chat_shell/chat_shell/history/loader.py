@@ -19,6 +19,7 @@ For HTTP Mode (CHAT_SHELL_MODE=http):
 
 import asyncio
 import logging
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from chat_shell.core.config import settings
@@ -274,13 +275,21 @@ async def get_chat_history(
         )
         return []
 
+    group_chat_history_window = None
+    if is_group_chat and limit is None:
+        group_chat_history_window = await _get_group_chat_history_window(task_id)
+
     if is_http:
         history = await _load_history_from_remote(
             task_id, is_group_chat, exclude_after_message_id, limit
         )
     else:
         history = await _load_history_from_db(
-            task_id, is_group_chat, exclude_after_message_id, limit
+            task_id,
+            is_group_chat,
+            exclude_after_message_id,
+            limit,
+            group_chat_history_window,
         )
 
     logger.debug(
@@ -289,10 +298,43 @@ async def get_chat_history(
         task_id,
     )
 
-    # Only truncate history for group chat (if no explicit limit was provided)
     if is_group_chat and limit is None:
-        return _truncate_history(history)
+        return _apply_group_chat_history_window(history, group_chat_history_window)
     return history
+
+
+async def _get_group_chat_history_window(task_id: int) -> dict[str, int]:
+    """Load group chat history window configuration for a task."""
+    if _is_http_mode():
+        from app.services.chat.group_chat_config import get_group_chat_history_window
+
+        return get_group_chat_history_window({})
+
+    return await asyncio.to_thread(_get_group_chat_history_window_sync, task_id)
+
+
+def _get_group_chat_history_window_sync(task_id: int) -> dict[str, int]:
+    """Load group chat history window directly from the backend database."""
+    from app.db.session import SessionLocal
+    from app.models.task import TaskResource
+    from app.services.chat.group_chat_config import get_group_chat_history_window
+
+    db = SessionLocal()
+    try:
+        task = (
+            db.query(TaskResource)
+            .filter(
+                TaskResource.id == task_id,
+                TaskResource.kind == "Task",
+                TaskResource.is_active == TaskResource.STATE_ACTIVE,
+            )
+            .first()
+        )
+        if not task or not isinstance(task.json, dict):
+            return get_group_chat_history_window({})
+        return get_group_chat_history_window(task.json)
+    finally:
+        db.close()
 
 
 async def _load_history_from_remote(
@@ -384,6 +426,7 @@ async def _load_history_from_db(
     is_group_chat: bool,
     exclude_after_message_id: int | None = None,
     limit: int | None = None,
+    history_window: dict[str, int] | None = None,
 ) -> list[dict[str, Any]]:
     """Load chat history from database (Package mode).
 
@@ -401,6 +444,7 @@ async def _load_history_from_db(
         is_group_chat,
         exclude_after_message_id,
         limit,
+        history_window,
     )
 
 
@@ -409,6 +453,7 @@ def _load_history_from_db_sync(
     is_group_chat: bool,
     exclude_after_message_id: int | None = None,
     limit: int | None = None,
+    history_window: dict[str, int] | None = None,
 ) -> list[dict[str, Any]]:
     """Synchronous implementation of chat history retrieval.
 
@@ -453,6 +498,11 @@ def _load_history_from_db_sync(
         else:
             subtasks = query.order_by(Subtask.message_id.asc()).all()
 
+        if is_group_chat and history_window and limit is None:
+            subtasks = _apply_group_chat_history_window_to_subtasks(
+                subtasks, history_window
+            )
+
         for subtask, sender_username in subtasks:
             msgs = _build_history_messages(db, subtask, sender_username, is_group_chat)
             history.extend(msgs)
@@ -482,6 +532,36 @@ def _build_history_messages(
     """
     from app.models.subtask import SubtaskRole, SubtaskStatus
     from app.models.subtask_context import ContextStatus, ContextType, SubtaskContext
+
+    def _get_group_chat_agent_name() -> str | None:
+        from app.models.kind import Kind
+
+        if not getattr(subtask, "team_id", None):
+            return None
+
+        team = (
+            db.query(Kind)
+            .filter(
+                Kind.id == subtask.team_id,
+                Kind.kind == "Team",
+                Kind.is_active == True,
+            )
+            .first()
+        )
+        return team.name if team else None
+
+    def _format_group_chat_assistant_content(content: str) -> str:
+        if not is_group_chat or not content:
+            return content
+
+        agent_name = _get_group_chat_agent_name()
+        if agent_name:
+            prefix = f"Agent[{agent_name}]: "
+            if not content.startswith(prefix):
+                return prefix + content
+            return content
+
+        return content
 
     if subtask.role == SubtaskRole.USER:
         # Parse multi-block prompt format (JSON array with system-reminder blocks).
@@ -703,6 +783,7 @@ def _build_history_messages(
             content = subtask.result.get("value", "")
             if not content:
                 return []
+            content = _format_group_chat_assistant_content(content)
             return [{"role": "assistant", "content": content}]
 
         # If messages_chain is available, use it to reconstruct the full
@@ -711,17 +792,29 @@ def _build_history_messages(
         if messages_chain and isinstance(messages_chain, list):
             # Attach loaded_skills to the last assistant message in the chain
             loaded_skills = subtask.result.get("loaded_skills")
+            normalized_chain = []
+            for msg in messages_chain:
+                normalized_msg = dict(msg)
+                if normalized_msg.get("role") == "assistant" and isinstance(
+                    normalized_msg.get("content"), str
+                ):
+                    normalized_msg["content"] = _format_group_chat_assistant_content(
+                        normalized_msg["content"]
+                    )
+                normalized_chain.append(normalized_msg)
+
             if loaded_skills:
-                for msg in reversed(messages_chain):
+                for msg in reversed(normalized_chain):
                     if msg.get("role") == "assistant":
                         msg["loaded_skills"] = loaded_skills
                         break
-            return messages_chain
+            return normalized_chain
 
         # Fallback for legacy data without messages_chain
         content = subtask.result.get("value", "")
         if not content:
             return []
+        content = _format_group_chat_assistant_content(content)
 
         msg: dict[str, Any] = {"role": "assistant", "content": content}
 
@@ -940,3 +1033,76 @@ def _truncate_history(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
     for g in [*head, *tail]:
         result.extend(g)
     return result
+
+
+def _apply_group_chat_history_window_to_subtasks(
+    subtasks: list[tuple[Any, Any]],
+    history_window: dict[str, int] | None,
+) -> list[tuple[Any, Any]]:
+    """Filter subtask rows by group chat maxDays/maxMessages."""
+    if not history_window:
+        return subtasks
+
+    max_days = history_window.get("maxDays")
+    max_messages = history_window.get("maxMessages")
+
+    filtered = subtasks
+    if max_days and max_days > 0:
+        cutoff = datetime.now(timezone.utc) - timedelta(days=max_days)
+        filtered = [
+            row
+            for row in filtered
+            if (
+                timestamp := getattr(row[0], "created_at", None)
+                or getattr(row[0], "completed_at", None)
+                or getattr(row[0], "updated_at", None)
+            )
+            is None
+            or (
+                timestamp.astimezone(timezone.utc)
+                if timestamp.tzinfo
+                else timestamp.replace(tzinfo=timezone.utc)
+            )
+            >= cutoff
+        ]
+
+    if max_messages and max_messages > 0:
+        filtered = filtered[-max_messages:]
+
+    return filtered
+
+
+def _apply_group_chat_history_window(
+    history: list[dict[str, Any]],
+    history_window: dict[str, int] | None,
+    *,
+    now: datetime | None = None,
+) -> list[dict[str, Any]]:
+    """Filter group chat history dicts by maxDays and maxMessages."""
+    if not history_window:
+        return history
+
+    filtered = history
+    max_days = history_window.get("maxDays")
+    max_messages = history_window.get("maxMessages")
+    reference_now = now or datetime.now(timezone.utc)
+
+    if max_days and max_days > 0:
+        cutoff = reference_now.astimezone(timezone.utc) - timedelta(days=max_days)
+        filtered = [
+            message
+            for message in filtered
+            if (
+                created_at := message.get("created_at")
+            )
+            is None
+            or datetime.fromisoformat(str(created_at).replace("Z", "+00:00")).astimezone(
+                timezone.utc
+            )
+            >= cutoff
+        ]
+
+    if max_messages and max_messages > 0:
+        filtered = filtered[-max_messages:]
+
+    return filtered

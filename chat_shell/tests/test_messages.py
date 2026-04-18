@@ -16,6 +16,7 @@ from datetime import datetime
 import pytest
 
 # Import directly from the module to avoid triggering __init__.py dependencies
+from chat_shell.history.loader import _apply_group_chat_history_window
 from chat_shell.messages.converter import MessageConverter
 
 
@@ -411,6 +412,59 @@ class TestConvertResponsesAPIToLangchain:
             blocks, username="X"
         )
         assert result["content"][0]["text"] == "User[X]: Hello"
+
+
+class TestGroupChatHistoryWindow:
+    def test_group_history_window_filters_by_max_days(self):
+        """Group chat history should exclude messages older than the configured day window."""
+        recent_time = datetime.now().astimezone().isoformat()
+        old_time = datetime(2026, 4, 10, 11, 59, 59).astimezone().isoformat()
+
+        history = [
+            {"role": "user", "content": "User[Alice]: recent", "created_at": recent_time},
+            {
+                "role": "assistant",
+                "content": "Agent[AgentA]: recent reply",
+                "created_at": recent_time,
+            },
+            {"role": "user", "content": "User[Bob]: old", "created_at": old_time},
+        ]
+
+        truncated = _apply_group_chat_history_window(
+            history,
+            {"maxDays": 2, "maxMessages": 10},
+            now=datetime(2026, 4, 12, 12, 0, 0).astimezone(),
+        )
+
+        assert truncated == [
+            {"role": "user", "content": "User[Alice]: recent", "created_at": recent_time},
+            {
+                "role": "assistant",
+                "content": "Agent[AgentA]: recent reply",
+                "created_at": recent_time,
+            },
+        ]
+
+    def test_group_history_window_caps_total_messages(self):
+        """Group chat history should keep at most maxMessages entries."""
+        now = datetime.now().astimezone().isoformat()
+        history = [
+            {"role": "user", "content": "User[Alice]: one", "created_at": now},
+            {"role": "assistant", "content": "Agent[A]: two", "created_at": now},
+            {"role": "user", "content": "User[Bob]: three", "created_at": now},
+            {"role": "assistant", "content": "Agent[B]: four", "created_at": now},
+        ]
+
+        truncated = _apply_group_chat_history_window(
+            history,
+            {"maxDays": 30, "maxMessages": 2},
+            now=datetime.now().astimezone(),
+        )
+
+        assert truncated == [
+            {"role": "user", "content": "User[Bob]: three", "created_at": now},
+            {"role": "assistant", "content": "Agent[B]: four", "created_at": now},
+        ]
 
     def test_multiple_context_blocks_stay_independent(self):
         """Multiple context text blocks are kept as independent blocks."""
