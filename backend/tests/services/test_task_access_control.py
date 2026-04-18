@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from app.models.kind import Kind
 from app.models.task import TaskResource
 from app.services.adapters.task_kinds import TaskKindsService
+from app.services.task_member_service import TaskMemberService
 
 
 @pytest.mark.unit
@@ -174,3 +175,100 @@ class TestTaskAccessControl:
         # Should raise 404 error
         assert exc_info.value.status_code == 404
         assert exc_info.value.detail == "Task not found"
+
+
+@pytest.mark.unit
+class TestGroupChatConfigUpdates:
+    @pytest.fixture
+    def mock_db(self):
+        return Mock(spec=Session)
+
+    @pytest.fixture
+    def task_member_service(self):
+        return TaskMemberService()
+
+    @pytest.fixture
+    def mock_task(self):
+        task = Mock(spec=TaskResource)
+        task.id = 123
+        task.user_id = 1
+        task.kind = "Task"
+        task.is_active = True
+        task.is_group_chat = False
+        task.json = {
+            "spec": {
+                "title": "Test task",
+                "prompt": "hello",
+                "teamRef": {
+                    "name": "alpha",
+                    "namespace": "default",
+                    "user_id": 1,
+                },
+                "is_group_chat": False,
+            }
+        }
+        return task
+
+    def test_convert_to_group_chat_defaults_history_window(
+        self, task_member_service, mock_db, mock_task
+    ):
+        """Converting a task should persist teamRefs and the default history window."""
+        with (
+            patch.object(task_member_service, "get_task", return_value=mock_task),
+            patch("app.services.task_member_service.flag_modified"),
+        ):
+            converted = task_member_service.convert_to_group_chat(
+                mock_db,
+                123,
+                team_refs=[
+                    {"name": "alpha", "namespace": "default", "user_id": 1},
+                    {"name": "beta", "namespace": "default", "user_id": 1},
+                ],
+            )
+
+        assert converted is True
+        assert mock_task.json["spec"]["teamRefs"] == [
+            {"name": "alpha", "namespace": "default", "user_id": 1},
+            {"name": "beta", "namespace": "default", "user_id": 1},
+        ]
+        assert mock_task.json["spec"]["groupChatConfig"]["historyWindow"] == {
+            "maxDays": 2,
+            "maxMessages": 200,
+        }
+
+    def test_convert_to_group_chat_updates_existing_group_settings(
+        self, task_member_service, mock_db, mock_task
+    ):
+        """Existing group chats should accept settings updates instead of short-circuiting."""
+        mock_task.is_group_chat = True
+        mock_task.json["spec"]["is_group_chat"] = True
+        mock_task.json["spec"]["teamRefs"] = [
+            {"name": "alpha", "namespace": "default", "user_id": 1}
+        ]
+        mock_task.json["spec"]["groupChatConfig"] = {
+            "historyWindow": {"maxDays": 2, "maxMessages": 200}
+        }
+
+        with (
+            patch.object(task_member_service, "get_task", return_value=mock_task),
+            patch("app.services.task_member_service.flag_modified"),
+        ):
+            converted = task_member_service.convert_to_group_chat(
+                mock_db,
+                123,
+                team_refs=[
+                    {"name": "beta", "namespace": "default", "user_id": 1},
+                    {"name": "gamma", "namespace": "default", "user_id": 1},
+                ],
+                history_window={"maxDays": 5, "maxMessages": 80},
+            )
+
+        assert converted is True
+        assert mock_task.json["spec"]["teamRefs"] == [
+            {"name": "beta", "namespace": "default", "user_id": 1},
+            {"name": "gamma", "namespace": "default", "user_id": 1},
+        ]
+        assert mock_task.json["spec"]["groupChatConfig"]["historyWindow"] == {
+            "maxDays": 5,
+            "maxMessages": 80,
+        }

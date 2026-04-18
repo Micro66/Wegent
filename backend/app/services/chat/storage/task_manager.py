@@ -22,6 +22,7 @@ from app.models.subtask import SenderType, Subtask, SubtaskRole, SubtaskStatus
 from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.kind import Bot, Task, Team
+from app.services.chat.group_chat_config import DEFAULT_GROUP_CHAT_HISTORY_WINDOW
 from app.services.chat.task_default_knowledge_bases import (
     build_initial_task_knowledge_base_refs,
 )
@@ -79,6 +80,9 @@ class TaskCreationParams:
     skip_status_check: bool = False
     # Device ID for local device execution (saved at task creation to avoid race condition)
     device_id: Optional[str] = None
+    # Group chat configuration written to the task spec on creation.
+    team_refs: Optional[List[Dict[str, Any]]] = None
+    group_chat_history_window: Optional[Dict[str, int]] = None
     # Video generation parameters (user-selected at generation time)
     # Used to save video_config to user subtask.result for display
     generate_params: Optional[Dict[str, Any]] = None
@@ -284,18 +288,30 @@ def create_new_task(
         knowledge_base_id=params.knowledge_base_id,
     )
 
+    primary_team_ref = {
+        "name": team.name,
+        "namespace": team.namespace,
+        "user_id": team.user_id,
+    }
+    group_chat_team_refs = params.team_refs or [primary_team_ref]
+    group_chat_history_window = (
+        params.group_chat_history_window or DEFAULT_GROUP_CHAT_HISTORY_WINDOW
+    )
+
     task_json = {
         "kind": "Task",
         "spec": {
             "title": title,
             "prompt": params.message,
-            "teamRef": {
-                "name": team.name,
-                "namespace": team.namespace,
-                "user_id": team.user_id,
-            },
+            "teamRef": primary_team_ref,
             "workspaceRef": {"name": workspace_name, "namespace": "default"},
             "is_group_chat": params.is_group_chat,
+            **({"teamRefs": group_chat_team_refs} if params.is_group_chat else {}),
+            **(
+                {"groupChatConfig": {"historyWindow": group_chat_history_window}}
+                if params.is_group_chat
+                else {}
+            ),
             **({"device_id": params.device_id} if params.device_id else {}),
             **(
                 {"knowledgeBaseRefs": knowledge_base_refs}

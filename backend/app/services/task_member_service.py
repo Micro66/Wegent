@@ -31,6 +31,10 @@ from app.schemas.task_member import (
     TaskMemberListResponse,
     TaskMemberResponse,
 )
+from app.services.chat.group_chat_config import (
+    DEFAULT_GROUP_CHAT_HISTORY_WINDOW,
+    get_group_chat_team_refs,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -106,8 +110,14 @@ class TaskMemberService:
         )
         return is_group_chat
 
-    def convert_to_group_chat(self, db: Session, task_id: int) -> bool:
-        """Convert an existing task to a group chat"""
+    def convert_to_group_chat(
+        self,
+        db: Session,
+        task_id: int,
+        team_refs: Optional[List[dict]] = None,
+        history_window: Optional[dict] = None,
+    ) -> bool:
+        """Convert an existing task to a group chat or update its configuration."""
         task = self.get_task(db, task_id)
         if not task:
             raise HTTPException(status_code=404, detail="Task not found")
@@ -115,13 +125,37 @@ class TaskMemberService:
         # Get current task JSON
         task_json = task.json if isinstance(task.json, dict) else {}
         spec = task_json.get("spec", {})
+        existing_team_ref = spec.get("teamRef")
+        normalized_team_refs = [
+            team_ref for team_ref in (team_refs or get_group_chat_team_refs(task_json))
+            if isinstance(team_ref, dict)
+        ]
+        if not normalized_team_refs and isinstance(existing_team_ref, dict):
+            normalized_team_refs = [existing_team_ref]
 
-        # Check if already a group chat
-        if spec.get("is_group_chat", False):
-            return False  # Already a group chat
+        if not normalized_team_refs:
+            raise HTTPException(
+                status_code=400,
+                detail="At least one agent must be configured for the group chat",
+            )
 
-        # Set is_group_chat flag in JSON
+        normalized_history_window = {
+            "maxDays": int(
+                (history_window or {}).get(
+                    "maxDays", DEFAULT_GROUP_CHAT_HISTORY_WINDOW["maxDays"]
+                )
+            ),
+            "maxMessages": int(
+                (history_window or {}).get(
+                    "maxMessages", DEFAULT_GROUP_CHAT_HISTORY_WINDOW["maxMessages"]
+                )
+            ),
+        }
+
         spec["is_group_chat"] = True
+        spec["teamRef"] = normalized_team_refs[0]
+        spec["teamRefs"] = normalized_team_refs
+        spec["groupChatConfig"] = {"historyWindow": normalized_history_window}
         task_json["spec"] = spec
 
         # IMPORTANT: Mark the json field as modified so SQLAlchemy detects the change
@@ -136,7 +170,7 @@ class TaskMemberService:
         db.commit()
         db.refresh(task)
 
-        logger.info(f"Task {task_id} converted to group chat")
+        logger.info("Task %s converted to group chat with %s team refs", task_id, len(normalized_team_refs))
         return True
 
     def get_member_count(self, db: Session, task_id: int) -> int:

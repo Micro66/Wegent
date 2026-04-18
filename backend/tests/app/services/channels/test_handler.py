@@ -4,6 +4,7 @@
 
 """Tests for BaseChannelHandler."""
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -11,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
 from app.models.user import User
+from app.services.chat.storage.task_manager import TaskCreationParams, create_new_task
 from app.services.channels import ChannelType
 from app.services.channels.handler import BaseChannelHandler, MessageContext
 
@@ -337,3 +339,50 @@ class TestResolveTeamForMessage:
 
             assert "Failed to resolve user binding" in caplog.text
             assert "Connection timeout" in caplog.text
+
+
+def test_create_new_group_chat_task_writes_team_refs_and_default_history_window():
+    """New group chat tasks should persist multi-agent config with default history bounds."""
+    db = MagicMock()
+    user = SimpleNamespace(id=7)
+    team = SimpleNamespace(name="Alpha", namespace="default", user_id=7)
+
+    placeholder_query = MagicMock()
+    placeholder_query.filter.return_value = placeholder_query
+    placeholder_query.first.return_value = None
+    db.query.return_value = placeholder_query
+
+    params = TaskCreationParams(
+        message="hello team",
+        is_group_chat=True,
+        task_type="chat",
+    )
+
+    with (
+        patch(
+            "app.services.adapters.task_kinds.task_kinds_service.create_task_id",
+            return_value=321,
+        ),
+        patch(
+            "app.services.adapters.task_kinds.task_kinds_service.validate_task_id",
+            return_value=True,
+        ),
+        patch(
+            "app.services.chat.storage.task_manager.build_initial_task_knowledge_base_refs",
+            return_value=[],
+        ),
+    ):
+        task = create_new_task(
+            db=db,
+            user=user,
+            team=team,
+            params=params,
+        )
+
+    assert task.json["spec"]["teamRefs"] == [
+        {"name": "Alpha", "namespace": "default", "user_id": 7}
+    ]
+    assert task.json["spec"]["groupChatConfig"]["historyWindow"] == {
+        "maxDays": 2,
+        "maxMessages": 200,
+    }

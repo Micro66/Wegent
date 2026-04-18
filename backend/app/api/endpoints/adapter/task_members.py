@@ -9,7 +9,7 @@ API endpoints for task members (group chat) management.
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
@@ -97,6 +97,7 @@ async def _emit_task_invited(
 @router.post("/{task_id}/convert-to-group-chat")
 def convert_to_group_chat(
     task_id: int,
+    request: Optional[dict] = Body(None),
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -111,8 +112,22 @@ def convert_to_group_chat(
             detail="Only the task owner can convert this task to group chat",
         )
 
-    # Convert the task
-    converted = task_member_service.convert_to_group_chat(db, task_id)
+    team_refs = None
+    history_window = None
+    if isinstance(request, dict):
+        team_refs = request.get("teamRefs", request.get("team_refs"))
+        group_chat_config = request.get("groupChatConfig", {})
+        history_window = request.get("historyWindow", request.get("history_window"))
+        if history_window is None and isinstance(group_chat_config, dict):
+            history_window = group_chat_config.get("historyWindow")
+
+    # Convert the task or update its group chat settings
+    converted = task_member_service.convert_to_group_chat(
+        db,
+        task_id,
+        team_refs=team_refs,
+        history_window=history_window,
+    )
 
     return {
         "message": (
