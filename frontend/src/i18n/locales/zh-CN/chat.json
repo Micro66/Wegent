@@ -332,6 +332,23 @@
     "mentionHint": "在群聊中，请使用 @ 提及智能体来获取 AI 回复",
     "mentionToTrigger": "输入 @{{teamName}} 以获取 AI 回复",
     "messageSaved": "消息已保存",
+    "create": {
+      "title": "创建群聊",
+      "description": "选择多个智能体并设置共享历史窗口。",
+      "titleLabel": "群聊名称",
+      "titlePlaceholder": "例如：发布协作群",
+      "titleRequired": "请输入群聊名称",
+      "teamRequired": "请至少选择一个智能体",
+      "agentsLabel": "智能体",
+      "noChatTeams": "暂无可用于群聊的智能体",
+      "historyDaysLabel": "保留天数",
+      "historyMessagesLabel": "最大消息数",
+      "initialMessage": "创建一个新的群聊",
+      "success": "群聊已创建",
+      "successDesc": "群聊配置已保存",
+      "failed": "创建群聊失败",
+      "failedDesc": "请稍后重试"
+    },
     "tabs": {
       "members": "成员",
       "knowledge": "知识库"

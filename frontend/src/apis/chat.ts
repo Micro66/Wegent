@@ -11,9 +11,44 @@
 
 import { getToken } from './user'
 import { getApiBaseUrl } from '@/lib/runtime-config'
+import type { GroupChatConfig, Team } from '@/types/api'
 
 // Use dynamic API base URL from runtime config
 const getApiUrl = () => getApiBaseUrl()
+
+export interface GroupChatTeamRefPayload {
+  id: number
+  team_id: number
+  name: string
+  namespace: string
+  user_id?: number | null
+}
+
+export interface GroupChatCreatePayload {
+  teamRefs: GroupChatTeamRefPayload[]
+  groupChatConfig: GroupChatConfig
+}
+
+export function buildGroupChatCreatePayload(
+  teams: Array<Pick<Team, 'id' | 'name' | 'namespace' | 'user_id'>>,
+  historyWindow: {
+    maxDays: number
+    maxMessages: number
+  }
+): GroupChatCreatePayload {
+  return {
+    teamRefs: teams.map(team => ({
+      id: team.id,
+      team_id: team.id,
+      name: team.name,
+      namespace: team.namespace,
+      user_id: team.user_id,
+    })),
+    groupChatConfig: {
+      historyWindow,
+    },
+  }
+}
 
 /**
  * Response from check direct chat API

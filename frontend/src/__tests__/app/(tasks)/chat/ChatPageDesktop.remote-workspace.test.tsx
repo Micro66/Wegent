@@ -3,10 +3,22 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import type { ReactNode } from 'react'
 
 import { ChatPageDesktop } from '@/app/(tasks)/chat/ChatPageDesktop'
+import { CreateGroupChatDialog } from '@/features/tasks/components/group-chat/CreateGroupChatDialog'
+
+const mockPush = jest.fn()
+const mockSendMessage = jest.fn()
+const mockRefreshTasks = jest.fn()
+const mockSetSelectedTask = jest.fn()
+const mockToast = jest.fn()
+const mockTeams = [
+  { id: 11, name: 'Agent Alpha', namespace: 'default', user_id: 1, agent_type: 'chat' },
+  { id: 22, name: 'Agent Beta', namespace: 'default', user_id: 1, agent_type: 'chat' },
+  { id: 33, name: 'Code Agent', namespace: 'default', user_id: 1, agent_type: 'code' },
+]
 
 // Mock window.matchMedia for useIsDesktop hook
 Object.defineProperty(window, 'matchMedia', {
@@ -24,6 +36,9 @@ Object.defineProperty(window, 'matchMedia', {
 })
 
 jest.mock('next/navigation', () => ({
+  useRouter: () => ({
+    push: mockPush,
+  }),
   useSearchParams: () => ({
     get: () => null,
   }),
@@ -61,12 +76,12 @@ jest.mock('@/features/layout/GithubStarButton', () => ({
 }))
 
 jest.mock('@/features/common/UserContext', () => ({
-  useUser: () => ({ user: null }),
+  useUser: () => ({ user: { id: 99, user_name: 'alice' } }),
 }))
 
 jest.mock('@/contexts/TeamContext', () => ({
   useTeamContext: () => ({
-    teams: [],
+    teams: mockTeams,
     isTeamsLoading: false,
     refreshTeams: jest.fn().mockResolvedValue([]),
     addTeam: jest.fn(),
@@ -82,7 +97,7 @@ jest.mock('@/contexts/DeviceContext', () => ({
 
 jest.mock('@/features/tasks/contexts/taskContext', () => ({
   useTaskContext: () => ({
-    refreshTasks: jest.fn(),
+    refreshTasks: mockRefreshTasks,
     selectedTaskDetail: {
       id: 42,
       title: 'Task 42',
@@ -91,14 +106,21 @@ jest.mock('@/features/tasks/contexts/taskContext', () => ({
         bots: [],
       },
     },
-    setSelectedTask: jest.fn(),
+    setSelectedTask: mockSetSelectedTask,
     refreshSelectedTaskDetail: jest.fn(),
   }),
 }))
 
 jest.mock('@/features/tasks/contexts/chatStreamContext', () => ({
   useChatStreamContext: () => ({
+    sendMessage: mockSendMessage,
     clearAllStreams: jest.fn(),
+  }),
+}))
+
+jest.mock('@/hooks/use-toast', () => ({
+  useToast: () => ({
+    toast: mockToast,
   }),
 }))
 
@@ -114,6 +136,22 @@ jest.mock('@/features/tasks/components/chat', () => ({
 
 jest.mock('@/features/tasks/components/group-chat', () => ({
   CreateGroupChatDialog: () => <div>create-group-chat-dialog</div>,
+}))
+
+jest.mock('@/features/tasks/components/selector', () => ({
+  ModelSelector: ({
+    setSelectedModel,
+  }: {
+    setSelectedModel: (model: { name: string }) => void
+  }) => (
+    <button
+      type="button"
+      data-testid="mock-model-selector"
+      onClick={() => setSelectedModel({ name: 'gpt-4.1' })}
+    >
+      choose-model
+    </button>
+  ),
 }))
 
 // Mock EnhancedMarkdown and other ESM-heavy components to avoid Jest ESM issues
@@ -154,9 +192,55 @@ jest.mock('@/features/tasks/components/remote-workspace', () => ({
 }))
 
 describe('ChatPageDesktop remote workspace integration', () => {
+  beforeEach(() => {
+    mockPush.mockReset()
+    mockSendMessage.mockReset()
+    mockSendMessage.mockResolvedValue(undefined)
+    mockRefreshTasks.mockReset()
+    mockSetSelectedTask.mockReset()
+    mockToast.mockReset()
+  })
+
   test('chat desktop renders remote workspace entry in top nav when task selected', () => {
     render(<ChatPageDesktop />)
 
     expect(screen.getByTestId('remote-workspace-entry')).toHaveTextContent('42:false')
+  })
+
+  test('group chat create dialog submits multi-agent config and edited history window', () => {
+    render(<CreateGroupChatDialog open={true} onOpenChange={jest.fn()} />)
+
+    fireEvent.change(screen.getByTestId('group-chat-title-input'), {
+      target: { value: 'Release War Room' },
+    })
+    fireEvent.click(screen.getByTestId('group-chat-agent-checkbox-11'))
+    fireEvent.click(screen.getByTestId('group-chat-agent-checkbox-22'))
+    fireEvent.change(screen.getByTestId('group-chat-history-days-input'), {
+      target: { value: '7' },
+    })
+    fireEvent.change(screen.getByTestId('group-chat-history-messages-input'), {
+      target: { value: '99' },
+    })
+    fireEvent.click(screen.getByTestId('mock-model-selector'))
+    fireEvent.click(screen.getByTestId('group-chat-create-button'))
+
+    expect(mockSendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: 'Release War Room',
+        team_id: 11,
+        is_group_chat: true,
+        teamRefs: [
+          { id: 11, team_id: 11, name: 'Agent Alpha', namespace: 'default', user_id: 1 },
+          { id: 22, team_id: 22, name: 'Agent Beta', namespace: 'default', user_id: 1 },
+        ],
+        groupChatConfig: {
+          historyWindow: {
+            maxDays: 7,
+            maxMessages: 99,
+          },
+        },
+      }),
+      expect.any(Object)
+    )
   })
 })

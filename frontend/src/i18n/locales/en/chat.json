@@ -354,6 +354,23 @@
     "mentionHint": "In group chat, use @ to mention an agent to get AI responses",
     "mentionToTrigger": "Type @{{teamName}} to get AI response",
     "messageSaved": "Message saved",
+    "create": {
+      "title": "Create Group Chat",
+      "description": "Choose multiple agents and set the shared history window.",
+      "titleLabel": "Group chat name",
+      "titlePlaceholder": "For example: Release war room",
+      "titleRequired": "Enter a group chat name",
+      "teamRequired": "Select at least one agent",
+      "agentsLabel": "Agents",
+      "noChatTeams": "No chat agents available",
+      "historyDaysLabel": "Retention days",
+      "historyMessagesLabel": "Max messages",
+      "initialMessage": "Create a new group chat",
+      "success": "Group chat created",
+      "successDesc": "Group chat settings were saved",
+      "failed": "Failed to create group chat",
+      "failedDesc": "Try again later"
+    },
     "tabs": {
       "members": "Members",
       "knowledge": "Knowledge"

@@ -8,7 +8,7 @@
 
 import client from './client'
 import { getToken } from './user'
-import type { SubtaskContextBrief } from '@/types/api'
+import type { GroupChatConfig, SubtaskContextBrief } from '@/types/api'
 
 /**
  * Subtask with sender information
@@ -48,6 +48,31 @@ export interface PollMessagesResponse {
 export interface StreamingStatus {
   has_streaming: boolean
   streaming_subtask_id?: number
+}
+
+export interface GroupChatTeamRefPayload {
+  id: number
+  team_id: number
+  name: string
+  namespace: string
+  user_id?: number | null
+}
+
+export interface UpdateGroupChatSettingsRequest {
+  teamRefs: GroupChatTeamRefPayload[]
+  groupChatConfig: GroupChatConfig
+}
+
+export const DEFAULT_GROUP_CHAT_HISTORY_WINDOW = {
+  maxDays: 2,
+  maxMessages: 200,
+} as const
+
+export async function updateGroupChatSettings(
+  taskId: number,
+  payload: UpdateGroupChatSettingsRequest
+): Promise<void> {
+  await client.post(`/tasks/${taskId}/convert-to-group-chat`, payload)
 }
 
 /**
