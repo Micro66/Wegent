@@ -276,6 +276,8 @@ export interface OpenLinks {
 }
 
 export interface TaskTeamRef {
+  id?: number | null
+  team_id?: number | null
   name: string
   namespace: string
   user_id?: number | null

@@ -32,6 +32,8 @@ interface ChatInputProps {
   // Group chat support
   isGroupChat?: boolean
   team?: Team | null
+  mentionableTeams?: Team[]
+  onGroupChatTargetChange?: (team: Team) => void
   // Callback when file(s) are pasted (e.g., images from clipboard)
   onPasteFile?: (files: File | File[]) => void
   // Whether there are no available teams (shows disabled state with special placeholder)
@@ -71,6 +73,8 @@ export default function ChatInput({
   badge,
   isGroupChat = false,
   team = null,
+  mentionableTeams = [],
+  onGroupChatTargetChange,
   onPasteFile,
   hasNoTeams = false,
   disabledReason,
@@ -343,19 +347,17 @@ export default function ChatInput({
             }
           }
         }
-        return null
+        return { top: 0, left: 0 }
       }
 
       // Check for @ trigger in group chat mode
-      if (isGroupChat && team) {
+      if (isGroupChat && mentionableTeams.length > 0) {
         const lastChar = text[text.length - 1]
         if (lastChar === '@') {
           const position = getCursorPosition()
-          if (position) {
-            setMentionMenuPosition(position)
-            setShowMentionMenu(true)
-            setMentionQuery('')
-          }
+          setMentionMenuPosition(position)
+          setShowMentionMenu(true)
+          setMentionQuery('')
         } else if (showMentionMenu) {
           // Update query or close menu if user continues typing after @
           const words = text.split(/\s/)
@@ -380,11 +382,9 @@ export default function ChatInput({
 
         if (isValidTrigger) {
           const position = getCursorPosition()
-          if (position) {
-            setSkillMenuPosition(position)
-            setShowSkillMenu(true)
-            setSkillQuery('')
-          }
+          setSkillMenuPosition(position)
+          setShowSkillMenu(true)
+          setSkillQuery('')
         } else if (showSkillMenu) {
           // Update query or close menu if user continues typing after /
           const words = text.split(/\s/)
@@ -405,7 +405,7 @@ export default function ChatInput({
       setMessage,
       getTextWithNewlines,
       isGroupChat,
-      team,
+      mentionableTeams.length,
       showMentionMenu,
       showSkillSelector,
       availableSkills.length,
@@ -415,7 +415,7 @@ export default function ChatInput({
 
   // Handle mention selection
   const handleMentionSelect = useCallback(
-    (mention: string) => {
+    (mention: string, selectedTeam: Team) => {
       if (editableRef.current) {
         const currentText = getTextWithNewlines(editableRef.current)
         // Replace the last @word (including partial @query) with the selected mention
@@ -450,9 +450,10 @@ export default function ChatInput({
         editableRef.current.focus()
         setShowMentionMenu(false)
         setMentionQuery('')
+        onGroupChatTargetChange?.(selectedTeam)
       }
     },
-    [getTextWithNewlines, setMessage, setContentWithNewlines]
+    [getTextWithNewlines, onGroupChatTargetChange, setMessage, setContentWithNewlines]
   )
 
   // Handle skill selection from autocomplete
@@ -671,9 +672,9 @@ export default function ChatInput({
       )}
 
       {/* Mention autocomplete menu */}
-      {showMentionMenu && isGroupChat && team && (
+      {showMentionMenu && isGroupChat && mentionableTeams.length > 0 && (
         <MentionAutocomplete
-          team={team}
+          teams={mentionableTeams}
           query={mentionQuery}
           onSelect={handleMentionSelect}
           onClose={() => {

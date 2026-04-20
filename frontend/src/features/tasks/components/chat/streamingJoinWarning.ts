@@ -10,6 +10,10 @@ type StreamingJoinTiming = {
   last_activity_at?: string | null
 }
 
+type TeamLike = {
+  id: number
+}
+
 function parseTimestampMs(value?: string | null): number | null {
   if (!value) return null
   const parsed = Date.parse(value)
@@ -45,4 +49,11 @@ export function getStreamingJoinWarningKey(
   }
 
   return null
+}
+
+export function getDefaultGroupChatTargetTeam<T extends TeamLike>(
+  groupChatTeams: T[],
+  fallbackTeam: T | null
+): T | null {
+  return groupChatTeams[0] || fallbackTeam
 }

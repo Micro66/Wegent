@@ -17,15 +17,15 @@ interface MentionableAgent {
 }
 
 interface MentionAutocompleteProps {
-  team: Team | null
+  teams: Team[]
   query?: string
-  onSelect: (mention: string) => void
+  onSelect: (mention: string, team: Team) => void
   onClose: () => void
   position: { top: number; left: number }
 }
 
 export default function MentionAutocomplete({
-  team,
+  teams,
   query = '',
   onSelect,
   onClose,
@@ -35,21 +35,14 @@ export default function MentionAutocomplete({
   const menuRef = useRef<HTMLDivElement>(null)
   const [selectedIndex, setSelectedIndex] = useState(0)
 
-  // Build mentionable agents list (team only, no individual bots)
   const mentionableAgents = useMemo<MentionableAgent[]>(() => {
-    if (!team) return []
-    const agents: MentionableAgent[] = []
-
-    // Only add team itself
-    agents.push({
+    return teams.map(team => ({
       id: team.id,
       name: team.name,
-      type: 'team',
+      type: 'team' as const,
       iconId: team.icon,
-    })
-
-    return agents
-  }, [team])
+    }))
+  }, [teams])
 
   // Filter agents based on query
   const filteredAgents = useMemo(() => {
@@ -82,10 +75,14 @@ export default function MentionAutocomplete({
 
   const handleSelect = useCallback(
     (agent: MentionableAgent) => {
-      onSelect(`@${agent.name}`)
+      const selectedTeam = teams.find(team => team.id === agent.id)
+      if (!selectedTeam) {
+        return
+      }
+      onSelect(`@${agent.name}`, selectedTeam)
       onClose()
     },
-    [onSelect, onClose]
+    [onClose, onSelect, teams]
   )
 
   // Handle keyboard navigation
@@ -118,7 +115,7 @@ export default function MentionAutocomplete({
     }
   }, [onClose, filteredAgents, selectedIndex, handleSelect])
 
-  if (!team || filteredAgents.length === 0) {
+  if (filteredAgents.length === 0) {
     return null
   }
 

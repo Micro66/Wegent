@@ -3,6 +3,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { getStreamingJoinWarningKey } from '@/features/tasks/components/chat/streamingJoinWarning'
+import { getDefaultGroupChatTargetTeam } from '@/features/tasks/components/chat/streamingJoinWarning'
+import type { Team } from '@/types/api'
 
 describe('getStreamingJoinWarningKey', () => {
   const now = new Date('2026-03-20T10:00:00.000Z').getTime()
@@ -75,5 +77,32 @@ describe('getStreamingJoinWarningKey', () => {
     )
 
     expect(key).toBe('chat:streaming_wait.started_over_20m')
+  })
+})
+
+describe('getDefaultGroupChatTargetTeam', () => {
+  const alphaTeam = {
+    id: 11,
+    name: 'Agent Alpha',
+    namespace: 'default',
+    user_id: 1,
+  } as Team
+  const betaTeam = {
+    id: 22,
+    name: 'Agent Beta',
+    namespace: 'default',
+    user_id: 1,
+  } as Team
+
+  it('resets the current target back to the first configured agent after send', () => {
+    const team = getDefaultGroupChatTargetTeam([alphaTeam, betaTeam], betaTeam)
+
+    expect(team?.id).toBe(11)
+  })
+
+  it('falls back to the current team when no configured agents are available', () => {
+    const team = getDefaultGroupChatTargetTeam([], betaTeam)
+
+    expect(team?.id).toBe(22)
   })
 })

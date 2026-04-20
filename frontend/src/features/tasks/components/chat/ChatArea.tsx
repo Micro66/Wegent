@@ -38,6 +38,7 @@ import { useSkillSelector } from '../../hooks/useSkillSelector'
 import { useModelSelection } from '../../hooks/useModelSelection'
 import { QueueMessageHandler } from '@/features/inbox'
 import type { ChatAreaExtension } from './types'
+import { getDefaultGroupChatTargetTeam } from './streamingJoinWarning'
 
 /**
  * Threshold in pixels for determining when to collapse selectors.
@@ -47,6 +48,7 @@ const COLLAPSE_SELECTORS_THRESHOLD = 420
 
 /** Generation mode type - video or image */
 type GenerateMode = 'video' | 'image'
+
 interface ChatAreaProps {
   teams: Team[]
   isTeamsLoading: boolean
@@ -308,6 +310,43 @@ function ChatAreaContent({
   const selectedTeam = chatState.selectedTeam
   const handleTeamChange = chatState.handleTeamChange
   const findDefaultTeamForMode = chatState.findDefaultTeamForMode
+  const groupChatTeams = useMemo(() => {
+    if (!selectedTaskDetail?.is_group_chat) {
+      return []
+    }
+
+    const configuredRefs = selectedTaskDetail.teamRefs || []
+    const resolvedTeams = configuredRefs
+      .map(ref => {
+        const refId = ref.id ?? ref.team_id
+        if (refId != null) {
+          const matchedById = teams.find(team => team.id === refId)
+          if (matchedById) {
+            return matchedById
+          }
+        }
+
+        return (
+          teams.find(
+            team =>
+              team.name === ref.name &&
+              team.namespace === ref.namespace &&
+              team.user_id === ref.user_id
+          ) || null
+        )
+      })
+      .filter((team): team is Team => Boolean(team))
+
+    if (resolvedTeams.length > 0) {
+      return resolvedTeams
+    }
+
+    return selectedTeam ? [selectedTeam] : []
+  }, [selectedTaskDetail?.is_group_chat, selectedTaskDetail?.teamRefs, selectedTeam, teams])
+  const defaultGroupChatTargetTeam = useMemo(
+    () => getDefaultGroupChatTargetTeam(groupChatTeams, selectedTeam),
+    [groupChatTeams, selectedTeam]
+  )
 
   // Team selection logic - using default team from server configuration
   useEffect(() => {
@@ -324,11 +363,12 @@ function ChatAreaContent({
     // Only sync when URL taskId matches taskDetail.id to prevent race conditions
     if (taskIdFromUrl && selectedTaskDetail?.id && detailTeamId) {
       if (selectedTaskDetail.id.toString() === taskIdFromUrl) {
-        // Only update if we haven't synced this task yet or team is different
-        if (
+        const shouldSyncToTaskTeam =
           lastSyncedTaskIdRef.current !== selectedTaskDetail.id ||
-          selectedTeam?.id !== detailTeamId
-        ) {
+          (!selectedTaskDetail.is_group_chat && selectedTeam?.id !== detailTeamId)
+
+        // Only update if we haven't synced this task yet or team is different
+        if (shouldSyncToTaskTeam) {
           const teamFromDetail = filteredTeams.find(t => t.id === detailTeamId)
           if (teamFromDetail) {
             handleTeamChange(teamFromDetail)
@@ -394,6 +434,26 @@ function ChatAreaContent({
     selectedTeam,
     handleTeamChange,
     findDefaultTeamForMode,
+  ])
+
+  useEffect(() => {
+    if (!selectedTaskDetail?.is_group_chat || groupChatTeams.length === 0) {
+      return
+    }
+
+    const currentTargetIsAllowed = selectedTeam
+      ? groupChatTeams.some(team => team.id === selectedTeam.id)
+      : false
+
+    if (!currentTargetIsAllowed && defaultGroupChatTargetTeam) {
+      handleTeamChange(defaultGroupChatTargetTeam)
+    }
+  }, [
+    defaultGroupChatTargetTeam,
+    groupChatTeams,
+    handleTeamChange,
+    selectedTaskDetail?.is_group_chat,
+    selectedTeam,
   ])
 
   // Reset initialization when switching from task to new chat
@@ -702,6 +762,16 @@ function ChatAreaContent({
     }
   }, [streamHandlers.isStreaming, scrollToBottom, isUserNearBottomRef])
 
+  const resetGroupChatTargetAfterSend = useCallback(() => {
+    if (!selectedTaskDetail?.is_group_chat || !defaultGroupChatTargetTeam) {
+      return
+    }
+
+    if (selectedTeam?.id !== defaultGroupChatTargetTeam.id) {
+      handleTeamChange(defaultGroupChatTargetTeam)
+    }
+  }, [defaultGroupChatTargetTeam, handleTeamChange, selectedTaskDetail?.is_group_chat, selectedTeam])
+
   // Callback for child components to send messages
   const handleSendMessageFromChild = useCallback(
     async (content: string) => {
@@ -709,8 +779,9 @@ function ChatAreaContent({
       const combinedMessage = existingInput ? `${content}\n\n---\n\n${existingInput}` : content
       setTaskInputMessage('')
       await handleSendMessageRef.current(combinedMessage)
+      resetGroupChatTargetAfterSend()
     },
-    [setTaskInputMessage]
+    [resetGroupChatTargetAfterSend, setTaskInputMessage]
   )
 
   // Callback for child components to send messages with a specific model (for regeneration)
@@ -954,8 +1025,15 @@ function ChatAreaContent({
     setTaskInputMessage: chatState.setTaskInputMessage,
     selectedTeam: chatState.selectedTeam,
     teams: teams,
+    groupChatTeams,
+    groupChatTargetTeam: selectedTaskDetail?.is_group_chat
+      ? chatState.selectedTeam || defaultGroupChatTargetTeam
+      : null,
     externalApiParams: chatState.externalApiParams,
     onTeamChange: chatState.handleTeamChange,
+    onGroupChatTargetChange: selectedTaskDetail?.is_group_chat
+      ? chatState.handleTeamChange
+      : undefined,
     onTeamsRefresh: async () => {
       if (onRefreshTeams) {
         await onRefreshTeams()
@@ -983,6 +1061,7 @@ function ChatAreaContent({
         clearQuote()
       }
       await streamHandlers.handleSendMessage(message)
+      resetGroupChatTargetAfterSend()
     },
     onPasteFile: handlePasteFile,
     // ChatInputControls props
@@ -1032,7 +1111,9 @@ function ChatAreaContent({
       if (quote) {
         clearQuote()
       }
-      streamHandlers.handleSendMessage(message)
+      void streamHandlers.handleSendMessage(message).then(() => {
+        resetGroupChatTargetAfterSend()
+      })
     },
     // Whether there are no available teams for current mode
     hasNoTeams: filteredTeams.length === 0,

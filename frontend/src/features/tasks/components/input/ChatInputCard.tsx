@@ -52,6 +52,9 @@ export interface ChatInputCardProps extends Omit<
 
   // Group chat
   isGroupChat: boolean
+  groupChatTeams?: Team[]
+  groupChatTargetTeam?: Team | null
+  onGroupChatTargetChange?: (team: Team) => void
 
   // Drag and drop
   isDragging: boolean
@@ -113,6 +116,9 @@ export function ChatInputCard({
   knowledgeBaseId,
   tipText,
   isGroupChat,
+  groupChatTeams = [],
+  groupChatTargetTeam = null,
+  onGroupChatTargetChange,
   isDragging,
   onDragEnter,
   onDragLeave,
@@ -232,6 +238,34 @@ export function ChatInputCard({
         </div>
       )}
 
+      {isGroupChat && groupChatTeams.length > 0 && (
+        <div
+          className="flex flex-wrap items-center gap-2 px-4 mb-2"
+          data-testid="group-chat-target-selector"
+        >
+          {groupChatTeams.map(team => {
+            const isActive = groupChatTargetTeam?.id === team.id
+
+            return (
+              <button
+                key={team.id}
+                type="button"
+                className={`h-9 rounded-md border px-3 text-sm transition-colors ${
+                  isActive
+                    ? 'border-primary bg-primary/10 text-primary'
+                    : 'border-border bg-base text-text-secondary hover:bg-surface'
+                }`}
+                data-testid={`group-chat-target-option-${team.id}`}
+                aria-pressed={isActive}
+                onClick={() => onGroupChatTargetChange?.(team)}
+              >
+                {team.name}
+              </button>
+            )
+          })}
+        </div>
+      )}
+
       {/* Chat Input Card */}
       <div
         className={`relative w-full max-w-[820px] mx-auto rounded-3xl border bg-base shadow-card-hover transition-colors flex flex-col justify-between ${isDragging ? 'border-primary ring-2 ring-primary/20' : 'border-primary/40'}`}
@@ -304,7 +338,9 @@ export function ChatInputCard({
                 ) : undefined
               }
               isGroupChat={isGroupChat}
-              team={selectedTeam}
+              team={groupChatTargetTeam || selectedTeam}
+              mentionableTeams={groupChatTeams.length > 0 ? groupChatTeams : teams}
+              onGroupChatTargetChange={onGroupChatTargetChange}
               onPasteFile={onPasteFile}
               hasNoTeams={hasNoTeams}
               disabledReason={disabledReason}
