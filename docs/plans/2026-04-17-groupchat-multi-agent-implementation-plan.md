@@ -361,9 +361,12 @@ git commit -m "feat(frontend): route group chat messages to selected agent"
 
 **Files:**
 - Modify: `frontend/src/features/tasks/components/message/MessagesArea.tsx`
+- Modify: `frontend/src/features/tasks/components/message/MessageBubble.tsx`
 - Modify: `frontend/src/features/tasks/state/*`
+- Modify: `frontend/src/features/tasks/hooks/useUnifiedMessages.ts`
 - Modify: `frontend/src/features/tasks/contexts/chatStreamContext.tsx`
-- Test: `frontend/e2e/tests/chat-task.spec.ts`
+- Modify: `frontend/src/features/tasks/components/chat/useChatStreamHandlers.tsx`
+- Test: `frontend/src/__tests__/features/tasks/components/message/chat-task.spec.ts.test.tsx`
 
 **Step 1: Write the failing test**
 
@@ -383,6 +386,7 @@ Expected: FAIL because mixed-agent metadata is not surfaced in the UI.
 **Step 3: Write minimal implementation**
 
 Propagate selected-agent metadata from websocket/task payloads into unified messages, then render it in the message header UI.
+For streaming replies, preserve the selected Agent identity from the send action until the real task/subtask IDs arrive.
 
 **Step 4: Run test to verify it passes**
 
@@ -396,7 +400,7 @@ Expected: PASS
 **Step 5: Commit**
 
 ```bash
-git add frontend/src/features/tasks/components/message/MessagesArea.tsx frontend/src/features/tasks/contexts/chatStreamContext.tsx frontend/src/features/tasks/state frontend/e2e/tests/chat-task.spec.ts
+git add frontend/src/features/tasks/components/message/MessagesArea.tsx frontend/src/features/tasks/components/message/MessageBubble.tsx frontend/src/features/tasks/contexts/chatStreamContext.tsx frontend/src/features/tasks/hooks/useUnifiedMessages.ts frontend/src/features/tasks/components/chat/useChatStreamHandlers.tsx frontend/src/features/tasks/state frontend/src/__tests__/features/tasks/components/message/chat-task.spec.ts.test.tsx
 git commit -m "feat(frontend): display replying agent in group chat history"
 ```
 
@@ -424,7 +428,7 @@ Run:
 ```bash
 cd backend && uv run pytest backend/tests/services/chat/test_group_chat_config.py backend/tests/api/ws/test_chat_namespace_group_chat.py backend/tests/services/chat/test_group_chat_history_window.py -v
 cd chat_shell && uv run pytest chat_shell/tests/test_messages.py -k group -v
-cd frontend && npm test -- --runInBand "chat-send-state.test.tsx|streamingJoinWarning.test.ts|ChatPageDesktop.remote-workspace.test.tsx"
+cd frontend && npm test -- --runInBand "chat-send-state.test.tsx|streamingJoinWarning.test.ts|ChatPageDesktop.remote-workspace.test.tsx|chat-task.spec.ts"
 ```
 
 Expected: PASS
