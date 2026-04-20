@@ -7,6 +7,7 @@
  */
 
 export { TaskStateMachine, generateMessageId } from './TaskStateMachine'
+export { resolveGroupChatAgentIdentity } from './groupChatAgents'
 export type {
   TaskStatus,
   MessageStatus,

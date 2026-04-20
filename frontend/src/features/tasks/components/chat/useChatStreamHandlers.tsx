@@ -686,6 +686,7 @@ export function useChatStreamHandlers({
             pendingContexts: pendingContexts.length > 0 ? pendingContexts : undefined,
             immediateTaskId: immediateTaskId,
             currentUserId: user?.id,
+            currentTeam: selectedTeam,
             onMessageSent: (
               _localMessageId: string,
               completedTaskId: number,

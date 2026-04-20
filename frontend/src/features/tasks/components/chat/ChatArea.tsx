@@ -1220,6 +1220,7 @@ function ChatAreaContent({
           <div className="w-full max-w-5xl mx-auto px-4 sm:px-6 pt-12">
             <MessagesArea
               selectedTeam={chatState.selectedTeam}
+              availableTeams={teams}
               selectedRepo={chatState.selectedRepo}
               selectedBranch={chatState.selectedBranch}
               onContentChange={handleMessagesContentChange}

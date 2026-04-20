@@ -57,6 +57,10 @@ export interface DisplayMessage {
   contexts?: SubtaskContextBrief[]
   /** Bot name for AI messages */
   botName?: string
+  /** Bot icon for AI messages */
+  botIcon?: string | null
+  /** Team ID for AI messages */
+  teamId?: number
   /** Sender user name for group chat */
   senderUserName?: string
   /** Sender user ID for group chat alignment */
@@ -105,6 +109,8 @@ export interface DisplayMessage {
 interface UseUnifiedMessagesOptions {
   /** Selected team for display */
   team: Team | null
+  /** Available teams for resolving group chat identity */
+  availableTeams?: Team[]
   /** Whether this is a group chat */
   isGroupChat: boolean
   /**
@@ -167,6 +173,8 @@ function toDisplayMessage(
     attachments,
     contexts,
     botName: msg.botName || team?.name,
+    botIcon: msg.botIcon,
+    teamId: msg.teamId,
     senderUserName: msg.senderUserName,
     senderUserId: msg.senderUserId,
     shouldShowSender: msg.shouldShowSender || (isGroupChat && msg.type === 'user'),
@@ -189,6 +197,7 @@ function toDisplayMessage(
  */
 export function useUnifiedMessages({
   team,
+  availableTeams = [],
   isGroupChat,
   pendingTaskId,
 }: UseUnifiedMessagesOptions): UseUnifiedMessagesResult {
@@ -209,8 +218,9 @@ export function useUnifiedMessages({
       isGroupChat,
       currentUserId: user?.id,
       currentUserName: user?.user_name,
+      groupChatTeams: availableTeams.map(({ id, name, icon }) => ({ id, name, icon })),
     }),
-    [team?.name, isGroupChat, user?.id, user?.user_name]
+    [availableTeams, team?.name, isGroupChat, user?.id, user?.user_name]
   )
 
   // Use the state machine hook

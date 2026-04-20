@@ -28,6 +28,7 @@
 
 import type { TaskDetailSubtask } from '@/types/api'
 import type { MessageBlock } from '../components/message/thinking/types'
+import { resolveGroupChatAgentIdentity } from './groupChatAgents'
 
 /**
  * Task state machine status
@@ -61,6 +62,8 @@ export interface UnifiedMessage {
   messageId?: number
   error?: string
   botName?: string
+  botIcon?: string | null
+  teamId?: number
   senderUserName?: string
   senderUserId?: number
   shouldShowSender?: boolean
@@ -143,7 +146,15 @@ type Event =
   | { type: 'SYNC_DONE' }
   | { type: 'SYNC_DONE_STREAMING'; subtaskId: number }
   | { type: 'SYNC_ERROR'; error: string }
-  | { type: 'CHAT_START'; subtaskId: number; shellType?: string; messageId?: number }
+  | {
+      type: 'CHAT_START'
+      subtaskId: number
+      shellType?: string
+      messageId?: number
+      botName?: string
+      botIcon?: string | null
+      teamId?: number
+    }
   | {
       type: 'CHAT_CHUNK'
       subtaskId: number
@@ -161,6 +172,9 @@ type Event =
       sources?: UnifiedMessage['sources']
       hasError?: boolean
       errorMessage?: string
+      botName?: string
+      botIcon?: string | null
+      teamId?: number
     }
   | { type: 'CHAT_ERROR'; subtaskId: number; error: string; messageId?: number }
   | { type: 'CHAT_CANCELLED'; subtaskId: number }
@@ -174,6 +188,11 @@ export interface SyncOptions {
   isGroupChat?: boolean
   currentUserId?: number
   currentUserName?: string
+  groupChatTeams?: Array<{
+    id: number
+    name: string
+    icon?: string | null
+  }>
   forceClean?: boolean
 }
 
@@ -286,8 +305,23 @@ export class TaskStateMachine {
   /**
    * Handle chat:start event
    */
-  handleChatStart(subtaskId: number, shellType?: string, messageId?: number): void {
-    this.dispatch({ type: 'CHAT_START', subtaskId, shellType, messageId })
+  handleChatStart(
+    subtaskId: number,
+    shellType?: string,
+    messageId?: number,
+    botName?: string,
+    botIcon?: string | null,
+    teamId?: number
+  ): void {
+    this.dispatch({
+      type: 'CHAT_START',
+      subtaskId,
+      shellType,
+      messageId,
+      botName,
+      botIcon,
+      teamId,
+    })
   }
 
   /**
@@ -313,7 +347,10 @@ export class TaskStateMachine {
     messageId?: number,
     sources?: UnifiedMessage['sources'],
     hasError?: boolean,
-    errorMessage?: string
+    errorMessage?: string,
+    botName?: string,
+    botIcon?: string | null,
+    teamId?: number
   ): void {
     this.dispatch({
       type: 'CHAT_DONE',
@@ -324,6 +361,9 @@ export class TaskStateMachine {
       sources,
       hasError,
       errorMessage,
+      botName,
+      botIcon,
+      teamId,
     })
   }
 
@@ -862,6 +902,7 @@ export class TaskStateMachine {
    */
   private buildMessages(subtasks: TaskDetailSubtask[]): void {
     const { teamName, isGroupChat, currentUserId, currentUserName, forceClean } = this.syncOptions
+    const groupChatTeams = this.syncOptions.groupChatTeams || []
     const streamingInfo = this.state.streamingInfo
 
     // Build set of valid subtask IDs
@@ -940,7 +981,11 @@ export class TaskStateMachine {
           messageId: subtask.message_id,
           attachments: subtask.attachments,
           contexts: subtask.contexts,
-          botName: subtask.bots?.[0]?.name || teamName,
+          ...resolveGroupChatAgentIdentity({
+            teamId: subtask.team_id,
+            fallbackName: subtask.bots?.[0]?.name || teamName,
+            groupChatTeams,
+          }),
           subtaskStatus: subtask.status,
           result: subtask.result as UnifiedMessage['result'],
           error: hasFrontendError ? existingMessage?.error : undefined,
@@ -999,7 +1044,13 @@ export class TaskStateMachine {
         messageId: subtask.message_id,
         attachments: subtask.attachments,
         contexts: subtask.contexts,
-        botName: !isUserMessage && subtask.bots?.[0]?.name ? subtask.bots[0].name : teamName,
+        ...(!isUserMessage
+          ? resolveGroupChatAgentIdentity({
+              teamId: subtask.team_id,
+              fallbackName: subtask.bots?.[0]?.name || teamName,
+              groupChatTeams,
+            })
+          : {}),
         senderUserName:
           subtask.sender_user_name ||
           (isUserMessage && subtask.sender_user_id === currentUserId ? currentUserName : undefined),
@@ -1031,6 +1082,9 @@ export class TaskStateMachine {
       subtaskId: event.subtaskId,
       messageId: event.messageId, // Set messageId from chat:start event for proper ordering
       result: initialResult,
+      botName: event.botName,
+      botIcon: event.botIcon,
+      teamId: event.teamId,
     })
 
     this.state = {
@@ -1285,6 +1339,9 @@ export class TaskStateMachine {
         subtaskId: event.subtaskId,
         result: event.result,
         sources: event.sources,
+        botName: event.botName,
+        botIcon: event.botIcon,
+        teamId: event.teamId,
       }
     }
 
@@ -1308,6 +1365,9 @@ export class TaskStateMachine {
     const newMessages = new Map(this.state.messages)
     newMessages.set(aiMessageId, {
       ...existingMessage,
+      botName: event.botName ?? existingMessage.botName,
+      botIcon: event.botIcon ?? existingMessage.botIcon,
+      teamId: event.teamId ?? existingMessage.teamId,
       status: finalStatus,
       subtaskStatus: finalSubtaskStatus,
       content: finalContent,

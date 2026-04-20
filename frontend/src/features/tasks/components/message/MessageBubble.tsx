@@ -27,6 +27,7 @@ import {
   RefreshCw,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { TeamIconDisplay } from '@/features/settings/components/teams/TeamIconDisplay'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import EnhancedMarkdown from '@/components/common/EnhancedMarkdown'
@@ -67,6 +68,7 @@ export interface Message {
   content: string
   timestamp: number
   botName?: string
+  botIcon?: string | null
   subtaskStatus?: string
   subtaskId?: number
   thinking?: Array<{
@@ -548,6 +550,10 @@ const MessageBubble = memo(
         <path d="M21.801 10A10 10 0 1 1 17 3.335"></path>
         <path d="m9 11 3 3L22 4"></path>
       </svg>
+    ) : msg.botIcon ? (
+      <span data-testid="ai-message-team-icon">
+        <TeamIconDisplay iconId={msg.botIcon} size="sm" className="text-text-secondary" />
+      </span>
     ) : (
       <Bot className="w-4 h-4" data-testid="ai-message-icon" />
     )

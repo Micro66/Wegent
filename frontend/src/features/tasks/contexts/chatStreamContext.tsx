@@ -159,6 +159,8 @@ interface ChatStreamContextType {
       currentUserId?: number
       /** Current user name for group chat sender info */
       currentUserName?: string
+      /** Current replying agent for group chat AI identity */
+      currentTeam?: Team | null
     }
   ) => Promise<number>
   /**
@@ -180,6 +182,12 @@ interface ChatStreamContextType {
 
 // Export the context for components that need optional access
 export const ChatStreamContext = createContext<ChatStreamContextType | undefined>(undefined)
+
+type PendingGroupChatAgent = {
+  teamId: number
+  botName?: string
+  botIcon?: string | null
+}
 
 /**
  * Provider component for chat stream context
@@ -210,6 +218,7 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
       }
     >
   >(new Map())
+  const pendingGroupChatAgentsRef = useRef<Map<number, PendingGroupChatAgent>>(new Map())
 
   // Ref to track temporary task ID to real task ID mapping
   const tempToRealTaskIdRef = useRef<Map<number, number>>(new Map())
@@ -262,11 +271,19 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
    * Handle chat:start event from WebSocket
    */
   const handleChatStart = useCallback((data: ChatStartPayload) => {
-    const { task_id, subtask_id, shell_type, message_id } = data
+    const { task_id, subtask_id, shell_type, message_id, bot_name } = data
+    const pendingGroupChatAgent = pendingGroupChatAgentsRef.current.get(task_id)
 
     // Get or create state machine and dispatch event
     const machine = taskStateManager.getOrCreate(task_id)
-    machine.handleChatStart(subtask_id, shell_type, message_id)
+    machine.handleChatStart(
+      subtask_id,
+      shell_type,
+      message_id,
+      bot_name || pendingGroupChatAgent?.botName,
+      pendingGroupChatAgent?.botIcon,
+      pendingGroupChatAgent?.teamId
+    )
   }, [])
 
   /**
@@ -307,6 +324,7 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
     const finalContent = (result?.value as string) || ''
     const hasError = result?.error !== undefined
     const errorMessage = hasError ? (result.error as string) : undefined
+    const pendingGroupChatAgent = pendingGroupChatAgentsRef.current.get(taskId)
 
     const machine = taskStateManager.get(taskId)
     if (machine) {
@@ -317,7 +335,10 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
         message_id,
         sources || (result?.sources as UnifiedMessage['sources']),
         hasError,
-        errorMessage
+        errorMessage,
+        pendingGroupChatAgent?.botName,
+        pendingGroupChatAgent?.botIcon,
+        pendingGroupChatAgent?.teamId
       )
     }
   }, [])
@@ -708,6 +729,14 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
       const machine = taskStateManager.getOrCreate(immediateTaskId)
       machine.addUserMessage(userMessage)
 
+      if (request.is_group_chat && options?.currentTeam) {
+        pendingGroupChatAgentsRef.current.set(immediateTaskId, {
+          teamId: options.currentTeam.id,
+          botName: options.currentTeam.name,
+          botIcon: options.currentTeam.icon,
+        })
+      }
+
       // Convert request to WebSocket payload
       const payload: ChatSendPayload = {
         task_id: request.task_id,
@@ -774,6 +803,11 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
             callbacksRef.current.set(realTaskId, callbacks)
           }
           tempToRealTaskIdRef.current.set(immediateTaskId, realTaskId)
+          const pendingGroupChatAgent = pendingGroupChatAgentsRef.current.get(immediateTaskId)
+          if (pendingGroupChatAgent) {
+            pendingGroupChatAgentsRef.current.delete(immediateTaskId)
+            pendingGroupChatAgentsRef.current.set(realTaskId, pendingGroupChatAgent)
+          }
 
           // Migrate state from temp machine to real machine
           // This ensures user messages added to temp machine are not lost

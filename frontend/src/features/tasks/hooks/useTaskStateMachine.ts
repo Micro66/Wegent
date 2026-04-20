@@ -80,6 +80,7 @@ export function useTaskStateMachine(
     syncOptions?.isGroupChat,
     syncOptions?.currentUserId,
     syncOptions?.currentUserName,
+    syncOptions?.groupChatTeams?.map(team => `${team.id}:${team.name}:${team.icon ?? ''}`).join('|'),
   ])
 
   // Update sync options when they change

@@ -124,6 +124,7 @@ function StreamingMessageBubble({
     content: '${$$}$' + (message.content || ''),
     timestamp: message.timestamp,
     botName: message.botName || selectedTeam?.name || t('common:messages.bot') || 'Bot',
+    botIcon: message.botIcon,
     subtaskStatus: 'RUNNING',
     // Use effectiveContent instead of displayContent to handle page refresh recovery
     recoveredContent: isStreaming ? effectiveContent : hasContent ? message.content : undefined,
@@ -165,6 +166,7 @@ function StreamingMessageBubble({
 
 interface MessagesAreaProps {
   selectedTeam?: Team | null
+  availableTeams?: Team[]
   selectedRepo?: GitRepoInfo | null
   selectedBranch?: GitBranch | null
   onShareButtonRender?: (button: React.ReactNode) => void
@@ -207,6 +209,7 @@ interface MessagesAreaProps {
 
 function MessagesArea({
   selectedTeam,
+  availableTeams = [],
   selectedRepo,
   selectedBranch,
   onContentChange,
@@ -241,6 +244,7 @@ function MessagesArea({
   // State machine handles recovery automatically (page refresh, reconnect, visibility)
   const { messages, streamingSubtaskIds, isStreaming } = useUnifiedMessages({
     team: selectedTeam || null,
+    availableTeams,
     isGroupChat,
     pendingTaskId,
   })
@@ -1075,6 +1079,7 @@ function MessagesArea({
         content,
         timestamp: msg.timestamp,
         botName: msg.botName,
+        botIcon: msg.botIcon,
         subtaskStatus: msg.subtaskStatus,
         subtaskId: msg.subtaskId,
         attachments: msg.attachments,
@@ -1114,6 +1119,7 @@ function MessagesArea({
           content,
           timestamp: msg.timestamp,
           botName: msg.botName,
+          botIcon: msg.botIcon,
           senderUserName: msg.senderUserName,
         }
       })
