@@ -70,6 +70,8 @@ class TaskCompletedEvent:
         status: Terminal status ("COMPLETED", "FAILED", "CANCELLED")
         result: Optional result dict containing output value
         error: Optional error message for FAILED status
+        executor_name: Optional executor name for container cleanup
+        executor_namespace: Optional executor namespace for container cleanup
     """
 
     task_id: int
@@ -78,6 +80,8 @@ class TaskCompletedEvent:
     status: str  # "COMPLETED" | "FAILED" | "CANCELLED"
     result: Optional[dict] = None
     error: Optional[str] = None
+    executor_name: Optional[str] = None
+    executor_namespace: Optional[str] = None
 
 
 @dataclass
