@@ -30,6 +30,7 @@ from app.db.session import get_db_session
 from app.models.kind import Kind
 from app.models.subscription import BackgroundExecution
 from app.schemas.subscription import BackgroundExecutionStatus
+from app.services.chat.operations.executor import call_executor_delete
 from app.services.subscription.execution import background_execution_manager
 from app.services.subscription.helpers import validate_subscription_for_read
 from app.services.subscription.notification_dispatcher import (
@@ -158,6 +159,15 @@ class SubscriptionTaskCompletionHandler:
                     await self._dispatch_notifications(
                         db, execution, event, result_summary
                     )
+
+                # Cleanup executor container for terminal states
+                if status in (
+                    BackgroundExecutionStatus.COMPLETED,
+                    BackgroundExecutionStatus.FAILED,
+                    BackgroundExecutionStatus.CANCELLED,
+                    BackgroundExecutionStatus.COMPLETED_SILENT,
+                ):
+                    await self._cleanup_executor_container(event)
 
         except Exception as e:
             logger.error(
@@ -356,6 +366,50 @@ class SubscriptionTaskCompletionHandler:
             logger.error(
                 f"[TaskCompletionHandler] Failed to dispatch notifications for "
                 f"execution {execution.id}: {e}",
+                exc_info=True,
+            )
+
+    async def _cleanup_executor_container(
+        self,
+        event: TaskCompletedEvent,
+    ) -> None:
+        """Cleanup executor container when subscription task completes.
+
+        Calls executor_manager to delete the container associated with
+        the completed/failed/cancelled task.
+
+        Args:
+            event: TaskCompletedEvent containing executor_name
+        """
+        if not event.executor_name:
+            logger.debug(
+                f"[TaskCompletionHandler] No executor_name in event, "
+                f"skipping container cleanup for task_id={event.task_id}"
+            )
+            return
+
+        logger.info(
+            f"[TaskCompletionHandler] Cleaning up executor container "
+            f"executor_name={event.executor_name}, task_id={event.task_id}"
+        )
+
+        try:
+            success = await call_executor_delete(event.executor_name)
+            if success:
+                logger.info(
+                    f"[TaskCompletionHandler] Successfully deleted executor container "
+                    f"{event.executor_name} for task_id={event.task_id}"
+                )
+            else:
+                logger.warning(
+                    f"[TaskCompletionHandler] Failed to delete executor container "
+                    f"{event.executor_name} for task_id={event.task_id}"
+                )
+        except Exception as e:
+            # Log error but don't fail the completion handling
+            logger.error(
+                f"[TaskCompletionHandler] Error cleaning up executor container "
+                f"{event.executor_name}: {e}",
                 exc_info=True,
             )
 
