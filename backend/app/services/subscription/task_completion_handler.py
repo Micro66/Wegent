@@ -30,7 +30,7 @@ from app.db.session import get_db_session
 from app.models.kind import Kind
 from app.models.subscription import BackgroundExecution
 from app.schemas.subscription import BackgroundExecutionStatus
-from app.services.chat.operations.executor import call_executor_delete
+from app.services.adapters.executor_kinds import executor_kinds_service
 from app.services.subscription.execution import background_execution_manager
 from app.services.subscription.helpers import validate_subscription_for_read
 from app.services.subscription.notification_dispatcher import (
@@ -160,14 +160,14 @@ class SubscriptionTaskCompletionHandler:
                         db, execution, event, result_summary
                     )
 
-                # Cleanup executor container for terminal states
+                # Cleanup executor container for all terminal states
                 if status in (
                     BackgroundExecutionStatus.COMPLETED,
                     BackgroundExecutionStatus.FAILED,
                     BackgroundExecutionStatus.CANCELLED,
                     BackgroundExecutionStatus.COMPLETED_SILENT,
                 ):
-                    await self._cleanup_executor_container(event)
+                    await self._cleanup_executor_container(db, event)
 
         except Exception as e:
             logger.error(
@@ -371,15 +371,17 @@ class SubscriptionTaskCompletionHandler:
 
     async def _cleanup_executor_container(
         self,
+        db: Session,
         event: TaskCompletedEvent,
     ) -> None:
         """Cleanup executor container when subscription task completes.
 
         Calls executor_manager to delete the container associated with
-        the completed/failed/cancelled task.
+        the completed/failed/cancelled task and marks executor_deleted_at.
 
         Args:
-            event: TaskCompletedEvent containing executor_name
+            db: Database session
+            event: TaskCompletedEvent containing executor_name and subtask_id
         """
         if not event.executor_name:
             logger.debug(
@@ -394,17 +396,40 @@ class SubscriptionTaskCompletionHandler:
         )
 
         try:
-            success = await call_executor_delete(event.executor_name)
-            if success:
-                logger.info(
-                    f"[TaskCompletionHandler] Successfully deleted executor container "
-                    f"{event.executor_name} for task_id={event.task_id}"
+            # Call executor_manager to delete container
+            result = await executor_kinds_service.delete_executor_task_async(
+                executor_name=event.executor_name,
+                executor_namespace=event.executor_namespace or "default",
+            )
+            logger.info(f"[TaskCompletionHandler] Executor delete result: {result}")
+
+            # Mark executor_deleted_at on the subtask
+            if event.subtask_id:
+                from sqlalchemy.orm.attributes import flag_modified
+
+                from app.models.subtask import Subtask
+
+                subtask = (
+                    db.query(Subtask).filter(Subtask.id == event.subtask_id).first()
                 )
-            else:
-                logger.warning(
-                    f"[TaskCompletionHandler] Failed to delete executor container "
-                    f"{event.executor_name} for task_id={event.task_id}"
-                )
+                if subtask:
+                    subtask.executor_deleted_at = True
+                    flag_modified(subtask, "executor_deleted_at")
+                    db.commit()
+                    logger.info(
+                        f"[TaskCompletionHandler] Marked executor_deleted_at=True "
+                        f"for subtask_id={event.subtask_id}"
+                    )
+                else:
+                    logger.warning(
+                        f"[TaskCompletionHandler] Subtask {event.subtask_id} not found "
+                        f"for marking executor_deleted_at"
+                    )
+
+            logger.info(
+                f"[TaskCompletionHandler] Successfully cleaned up executor container "
+                f"{event.executor_name} for task_id={event.task_id}"
+            )
         except Exception as e:
             # Log error but don't fail the completion handling
             logger.error(
