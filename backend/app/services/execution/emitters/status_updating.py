@@ -508,7 +508,7 @@ class StatusUpdatingEmitter(ResultEmitter):
                 )
                 return
 
-            # Publish TaskCompletedEvent
+            # Publish TaskCompletedEvent with executor info for container cleanup
             event_bus = get_event_bus()
             await event_bus.publish(
                 TaskCompletedEvent(
@@ -518,13 +518,15 @@ class StatusUpdatingEmitter(ResultEmitter):
                     status=status,
                     result=result,
                     error=error,
+                    executor_name=self._executor_name,
+                    executor_namespace=self._executor_namespace,
                 )
             )
 
             logger.info(
                 f"[StatusUpdatingEmitter] Published TaskCompletedEvent: "
                 f"task_id={self._task_id}, subtask_id={self._subtask_id}, "
-                f"status={status}"
+                f"status={status}, executor_name={self._executor_name}"
             )
 
         except Exception as e:
