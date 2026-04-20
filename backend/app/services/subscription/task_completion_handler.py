@@ -390,6 +390,41 @@ class SubscriptionTaskCompletionHandler:
             )
             return
 
+        # Verify this is actually a subscription task by checking task labels
+        from app.models.task import TaskResource
+
+        task = (
+            db.query(TaskResource)
+            .filter(
+                TaskResource.id == event.task_id,
+                TaskResource.kind == "Task",
+                TaskResource.is_active.in_(TaskResource.is_active_query()),
+            )
+            .first()
+        )
+
+        if not task:
+            logger.debug(
+                f"[TaskCompletionHandler] Task {event.task_id} not found, "
+                f"skipping container cleanup"
+            )
+            return
+
+        # Check if this is a subscription task via labels or is_active state
+        task_json = task.json or {}
+        labels = task_json.get("metadata", {}).get("labels", {})
+        is_subscription_task = (
+            labels.get("type") == "subscription"
+            or task.is_active == TaskResource.STATE_SUBSCRIPTION
+        )
+
+        if not is_subscription_task:
+            logger.debug(
+                f"[TaskCompletionHandler] Task {event.task_id} is not a subscription task "
+                f"(labels={labels}, is_active={task.is_active}), skipping container cleanup"
+            )
+            return
+
         logger.info(
             f"[TaskCompletionHandler] Cleaning up executor container "
             f"executor_name={event.executor_name}, task_id={event.task_id}"
