@@ -390,9 +390,20 @@ async def _create_non_streaming_response_unified(
     # Extract knowledge base names from tool settings
     knowledge_base_names = tool_settings.get("knowledge_base_names", [])
 
-    # Auto-enable tools when knowledge_base is specified
-    # This ensures KB tools and skill tools are actually added to the agent
-    enable_tools = enable_chat_bot or bool(knowledge_base_names)
+    # Extract user-provided MCP servers from tool settings
+    user_mcp_servers = tool_settings.get("mcp_servers", {})
+    # Convert dict format to list format for build_execution_request
+    mcp_servers_list = []
+    if user_mcp_servers:
+        for name, config in user_mcp_servers.items():
+            if isinstance(config, dict):
+                mcp_servers_list.append({"name": name, **config})
+
+    # Auto-enable tools when knowledge_base or user MCP servers are specified
+    # This ensures KB tools, skill tools, and user MCP tools are actually added to the agent
+    enable_tools = (
+        enable_chat_bot or bool(knowledge_base_names) or bool(mcp_servers_list)
+    )
 
     # Link attachments to user subtask if provided
     if request_body.attachment_ids:
@@ -428,6 +439,7 @@ async def _create_non_streaming_response_unified(
             preload_skills=preload_skills,
             knowledge_base_names=knowledge_base_names,
             reasoning_config=reasoning_config,
+            mcp_servers=mcp_servers_list,
         )
     except Exception as e:
         logger.error(f"Failed to build execution request: {e}")
@@ -697,9 +709,20 @@ async def _create_streaming_response_unified(
     # Extract knowledge base names from tool settings
     knowledge_base_names = tool_settings.get("knowledge_base_names", [])
 
-    # Auto-enable tools when knowledge_base is specified
-    # This ensures KB tools and skill tools are actually added to the agent
-    enable_tools = enable_chat_bot or bool(knowledge_base_names)
+    # Extract user-provided MCP servers from tool settings
+    user_mcp_servers = tool_settings.get("mcp_servers", {})
+    # Convert dict format to list format for build_execution_request
+    mcp_servers_list = []
+    if user_mcp_servers:
+        for name, config in user_mcp_servers.items():
+            if isinstance(config, dict):
+                mcp_servers_list.append({"name": name, **config})
+
+    # Auto-enable tools when knowledge_base or user MCP servers are specified
+    # This ensures KB tools, skill tools, and user MCP tools are actually added to the agent
+    enable_tools = (
+        enable_chat_bot or bool(knowledge_base_names) or bool(mcp_servers_list)
+    )
 
     # Link attachments to user subtask if provided
     if request_body.attachment_ids:
@@ -735,6 +758,7 @@ async def _create_streaming_response_unified(
             preload_skills=preload_skills,
             knowledge_base_names=knowledge_base_names,
             reasoning_config=reasoning_config,
+            mcp_servers=mcp_servers_list,
         )
     finally:
         # Close the database session before streaming starts
