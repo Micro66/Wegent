@@ -137,9 +137,11 @@ class TestChatNamespaceGroupChat:
                 ai_triggered=True,
             )
         )
-        monkeypatch.setattr("app.services.chat.storage.create_chat_task", create_chat_task)
+        monkeypatch.setattr(
+            "app.services.chat.storage.create_chat_task", create_chat_task
+        )
 
-        payload = {"task_id": 77, "team_id": 11, "message": "hello group"}
+        payload = {"task_id": 77, "team_id": 11, "message": "@agent-a hello group"}
 
         result = await namespace.on_chat_send("sid-1", payload)
 
@@ -147,9 +149,7 @@ class TestChatNamespaceGroupChat:
         assert create_chat_task.await_args.kwargs["should_trigger_ai"] is True
         assert create_chat_task.await_args.kwargs["team"].id == 11
 
-    async def test_group_chat_send_rejects_team_outside_group_config(
-        self, monkeypatch
-    ):
+    async def test_group_chat_send_rejects_team_outside_group_config(self, monkeypatch):
         """Existing group chats should reject a selected team outside allowed refs."""
         namespace = ChatNamespace("/chat")
         namespace._check_token_expiry = AsyncMock(return_value=False)
@@ -183,7 +183,9 @@ class TestChatNamespaceGroupChat:
             "app.services.chat.config.is_deep_research_protocol", lambda db, team: False
         )
         create_chat_task = AsyncMock()
-        monkeypatch.setattr("app.services.chat.storage.create_chat_task", create_chat_task)
+        monkeypatch.setattr(
+            "app.services.chat.storage.create_chat_task", create_chat_task
+        )
 
         payload = {"task_id": 77, "team_id": 99, "message": "hello group"}
 
@@ -194,9 +196,7 @@ class TestChatNamespaceGroupChat:
         }
         create_chat_task.assert_not_awaited()
 
-    async def test_group_chat_send_accepts_legacy_single_team_config(
-        self, monkeypatch
-    ):
+    async def test_group_chat_send_accepts_legacy_single_team_config(self, monkeypatch):
         """Legacy single-team group chats should still allow their only team."""
         namespace = ChatNamespace("/chat")
         namespace._check_token_expiry = AsyncMock(return_value=False)
@@ -239,9 +239,11 @@ class TestChatNamespaceGroupChat:
                 ai_triggered=True,
             )
         )
-        monkeypatch.setattr("app.services.chat.storage.create_chat_task", create_chat_task)
+        monkeypatch.setattr(
+            "app.services.chat.storage.create_chat_task", create_chat_task
+        )
 
-        payload = {"task_id": 77, "team_id": 7, "message": "legacy hello"}
+        payload = {"task_id": 77, "team_id": 7, "message": "@legacy-agent legacy hello"}
 
         result = await namespace.on_chat_send("sid-1", payload)
 
