@@ -18,7 +18,10 @@ from typing import Any, Dict, List, Optional
 from app.core.config import settings
 from app.services.memory.client import LongTermMemoryClient
 from app.services.memory.schemas import MemoryMetadata, MemorySearchResult
-from app.services.memory.utils import inject_memories_to_prompt, sanitize_memory_messages
+from app.services.memory.utils import (
+    inject_memories_to_prompt,
+    sanitize_memory_messages,
+)
 from shared.telemetry.decorators import trace_async, trace_sync
 
 logger = logging.getLogger(__name__)

@@ -141,12 +141,14 @@ jest.mock('@/features/tasks/components/group-chat', () => ({
 jest.mock('@/features/tasks/components/selector', () => ({
   ModelSelector: ({
     setSelectedModel,
+    selectedModel,
   }: {
     setSelectedModel: (model: { name: string }) => void
+    selectedModel?: { name?: string }
   }) => (
     <button
       type="button"
-      data-testid="mock-model-selector"
+      data-testid={`mock-model-selector-${selectedModel?.name || 'default'}`}
       onClick={() => setSelectedModel({ name: 'gpt-4.1' })}
     >
       choose-model
@@ -221,7 +223,11 @@ describe('ChatPageDesktop remote workspace integration', () => {
     fireEvent.change(screen.getByTestId('group-chat-history-messages-input'), {
       target: { value: '99' },
     })
-    fireEvent.click(screen.getByTestId('mock-model-selector'))
+    // Click model selector for each selected agent (2 agents selected)
+    const modelSelectors = screen.getAllByTestId(/mock-model-selector/)
+    modelSelectors.forEach(selector => {
+      fireEvent.click(selector)
+    })
     fireEvent.click(screen.getByTestId('group-chat-create-button'))
 
     expect(mockSendMessage).toHaveBeenCalledWith(
@@ -230,8 +236,24 @@ describe('ChatPageDesktop remote workspace integration', () => {
         team_id: 11,
         is_group_chat: true,
         teamRefs: [
-          { id: 11, team_id: 11, name: 'Agent Alpha', namespace: 'default', user_id: 1 },
-          { id: 22, team_id: 22, name: 'Agent Beta', namespace: 'default', user_id: 1 },
+          {
+            id: 11,
+            team_id: 11,
+            name: 'Agent Alpha',
+            namespace: 'default',
+            user_id: 1,
+            model_id: 'gpt-4.1',
+            force_override_bot_model: false,
+          },
+          {
+            id: 22,
+            team_id: 22,
+            name: 'Agent Beta',
+            namespace: 'default',
+            user_id: 1,
+            model_id: 'gpt-4.1',
+            force_override_bot_model: false,
+          },
         ],
         groupChatConfig: {
           historyWindow: {
