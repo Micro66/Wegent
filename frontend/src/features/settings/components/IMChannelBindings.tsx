@@ -163,52 +163,27 @@ export default function IMChannelBindings() {
 
   // Listen for IM group discovered event via Socket.IO
   useEffect(() => {
-    console.log('[IMBinding] Socket.IO useEffect triggered:', {
-      hasSocket: !!socket,
-      isDialogOpen,
-      bindingStep,
-      currentChannelId,
-      socketConnected: socket?.connected,
-    })
-
     // Always set up listener when dialog is open, regardless of binding step
     // This ensures we don't miss events due to race conditions
     if (!socket || !isDialogOpen || currentChannelId === null) {
-      console.log('[IMBinding] Skipping event listener setup - conditions not met')
       return
     }
 
-    console.log('[IMBinding] Setting up Socket.IO listener for im:group_discovered')
-
     const handleGroupDiscovered = (payload: IMGroupDiscoveredPayload) => {
-      console.log('[IMBinding] Received im:group_discovered event:', payload)
-      console.log(
-        '[IMBinding] Current channelId:',
-        currentChannelId,
-        'Payload channelId:',
-        payload.channel_id
-      )
-      console.log('[IMBinding] Current bindingStep:', bindingStep)
-
       // Accept the event if channel_id matches, regardless of current binding step
       // This handles race conditions where event arrives before state updates
       if (payload.channel_id === currentChannelId) {
-        console.log('[IMBinding] Channel ID matches, updating state')
         setDiscoveredGroup({
           conversation_id: payload.conversation_id,
           group_name: payload.group_name,
         })
         setBindingStep('select_team')
-      } else {
-        console.log('[IMBinding] Channel ID mismatch, ignoring event')
       }
     }
 
     socket.on(ServerEvents.IM_GROUP_DISCOVERED, handleGroupDiscovered)
-    console.log('[IMBinding] Socket.IO listener registered')
 
     return () => {
-      console.log('[IMBinding] Cleaning up Socket.IO listener')
       socket.off(ServerEvents.IM_GROUP_DISCOVERED, handleGroupDiscovered)
     }
   }, [socket, isDialogOpen, bindingStep, currentChannelId])
@@ -216,16 +191,12 @@ export default function IMChannelBindings() {
   // Start waiting for group message
   const startWaitingForGroup = async () => {
     if (currentChannelId === null) {
-      console.log('[IMBinding] startWaitingForGroup: currentChannelId is null')
       return
     }
 
-    console.log('[IMBinding] Starting binding session for channel:', currentChannelId)
     setIsProcessing(true)
     try {
-      console.log('[IMBinding] Calling startIMBindingSession API')
       await userApis.startIMBindingSession(currentChannelId)
-      console.log('[IMBinding] startIMBindingSession API success, setting step to waiting')
       setBindingStep('waiting')
     } catch (error) {
       console.error('[IMBinding] Failed to start binding session:', error)

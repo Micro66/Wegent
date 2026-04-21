@@ -94,7 +94,6 @@ class TaskMemberService:
 
     def is_group_chat(self, db: Session, task_id: int) -> bool:
         """Check if a task is configured as a group chat"""
-        logger.info(f"[is_group_chat] Checking task_id={task_id}")
         task = self.get_task(db, task_id)
         if not task:
             logger.warning(f"[is_group_chat] Task {task_id} not found")
@@ -127,7 +126,6 @@ class TaskMemberService:
         task_json = copy.deepcopy(task.json) if isinstance(task.json, dict) else {}
         spec = task_json.get("spec", {})
         existing_team_ref = spec.get("teamRef")
-        logger.info("[convert_to_group_chat] Input team_refs: %s", team_refs)
         normalized_team_refs = [
             team_ref
             for team_ref in (team_refs or get_group_chat_team_refs(task_json))
@@ -169,7 +167,6 @@ class TaskMemberService:
         task_json["spec"] = spec
 
         # IMPORTANT: Mark the json field as modified so SQLAlchemy detects the change
-        logger.info("[convert_to_group_chat] task_json before save: %s", task_json)
         logger.info(
             "[convert_to_group_chat] task_json type: %s, spec type: %s, teamRefs type: %s",
             type(task_json),
@@ -177,7 +174,6 @@ class TaskMemberService:
             type(task_json.get("spec", {}).get("teamRefs")),
         )
         task.json = task_json
-        logger.info("[convert_to_group_chat] task.json assigned: %s", task.json)
         flag_modified(task, "json")
 
         # Sync to physical column for optimized queries
@@ -367,7 +363,6 @@ class TaskMemberService:
         db.add(new_member)
         db.commit()
         db.refresh(new_member)
-        logger.info(f"[add_member] New member created successfully: id={new_member.id}")
         return new_member
 
     def remove_member(

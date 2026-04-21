@@ -311,13 +311,11 @@ function ChatAreaContent({
   const handleTeamChange = chatState.handleTeamChange
   const findDefaultTeamForMode = chatState.findDefaultTeamForMode
   const groupChatTeams = useMemo(() => {
-    console.log('[ChatArea] selectedTaskDetail:', selectedTaskDetail)
     if (!selectedTaskDetail?.is_group_chat) {
       return []
     }
 
     const configuredRefs = selectedTaskDetail.teamRefs || []
-    console.log('[ChatArea] configuredRefs:', configuredRefs, 'teams:', teams)
     const resolvedTeams = configuredRefs
       .map(ref => {
         const refId = ref.id ?? ref.team_id

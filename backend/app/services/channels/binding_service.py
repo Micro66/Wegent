@@ -446,7 +446,6 @@ class IMChannelBindingService:
         logger.info(
             f"[IMBinding] Starting binding session: user_id={user_id}, channel_id={channel_id}"
         )
-        logger.info(f"[IMBinding] Session key: {session_key}, Index key: {index_key}")
 
         session_data = {
             "user_id": user_id,
@@ -462,8 +461,6 @@ class IMChannelBindingService:
                 expire=BINDING_SESSION_TTL,
             )
 
-            logger.info(f"[IMBinding] Cache set result: {result}")
-
             if result:
                 # Add to index for quick lookup
                 await cache_manager.set(
@@ -471,7 +468,6 @@ class IMChannelBindingService:
                     {"channel_id": channel_id, "session_key": session_key},
                     expire=BINDING_SESSION_TTL,
                 )
-                logger.info(f"[IMBinding] Binding session started successfully")
 
             return result
         except Exception as e:
@@ -520,7 +516,6 @@ class IMChannelBindingService:
                 "room": f"user:{user_id}",
             }
             message_json = json.dumps(socketio_message)
-            logger.info(f"[IMBinding] Redis message payload: {message_json}")
             result = redis_client.publish("socketio", message_json)
             redis_client.close()
             logger.info(
@@ -580,7 +575,6 @@ class IMChannelBindingService:
 
         try:
             data = await cache_manager.get(session_key)
-            logger.info(f"[IMBinding] Binding session data: {data}")
             return data
         except Exception as e:
             logger.error(
@@ -624,8 +618,6 @@ class IMChannelBindingService:
                 f"[IMBinding] No active binding session for user {user_id}, channel {channel_id}"
             )
             return None
-
-        logger.info(f"[IMBinding] Found active binding session: {session}")
 
         # Create group binding request
         group_binding = IMGroupBinding(

@@ -152,8 +152,6 @@ export function CreateGroupChatDialog({ open, onOpenChange }: CreateGroupChatDia
       },
       teamRefsWithModels
     )
-    console.log('[CreateGroupChatDialog] teamRefsWithModels:', teamRefsWithModels)
-    console.log('[CreateGroupChatDialog] groupChatPayload:', groupChatPayload)
 
     // Get primary team model config for initial message
     const primaryConfig = teamModels[primarySelectedTeam.id]
@@ -180,7 +178,6 @@ export function CreateGroupChatDialog({ open, onOpenChange }: CreateGroupChatDia
           currentUserId: user?.id,
           currentUserName: user?.user_name,
           onMessageSent: (_localMessageId: string, realTaskId: number) => {
-            console.log('[CreateGroupChatDialog] groupChatPayload:', groupChatPayload)
             void updateGroupChatSettings(realTaskId, groupChatPayload)
               .then(() => {
                 onOpenChange(false)
