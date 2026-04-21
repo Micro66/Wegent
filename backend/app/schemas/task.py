@@ -176,6 +176,8 @@ class TaskDetail(BaseModel):
     requested_skills: Optional[List[SkillRef]] = (
         None  # User-selected skills for this task
     )
+    teamRefs: Optional[List[dict]] = None  # Group chat team references
+    groupChatConfig: Optional[dict] = None  # Group chat configuration
 
     class Config:
         from_attributes = True

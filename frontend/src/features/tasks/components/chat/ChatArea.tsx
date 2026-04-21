@@ -311,11 +311,13 @@ function ChatAreaContent({
   const handleTeamChange = chatState.handleTeamChange
   const findDefaultTeamForMode = chatState.findDefaultTeamForMode
   const groupChatTeams = useMemo(() => {
+    console.log('[ChatArea] selectedTaskDetail:', selectedTaskDetail)
     if (!selectedTaskDetail?.is_group_chat) {
       return []
     }
 
     const configuredRefs = selectedTaskDetail.teamRefs || []
+    console.log('[ChatArea] configuredRefs:', configuredRefs, 'teams:', teams)
     const resolvedTeams = configuredRefs
       .map(ref => {
         const refId = ref.id ?? ref.team_id
@@ -770,7 +772,12 @@ function ChatAreaContent({
     if (selectedTeam?.id !== defaultGroupChatTargetTeam.id) {
       handleTeamChange(defaultGroupChatTargetTeam)
     }
-  }, [defaultGroupChatTargetTeam, handleTeamChange, selectedTaskDetail?.is_group_chat, selectedTeam])
+  }, [
+    defaultGroupChatTargetTeam,
+    handleTeamChange,
+    selectedTaskDetail?.is_group_chat,
+    selectedTeam,
+  ])
 
   // Callback for child components to send messages
   const handleSendMessageFromChild = useCallback(

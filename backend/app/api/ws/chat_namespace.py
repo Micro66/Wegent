@@ -55,16 +55,16 @@ from app.services.chat.access import (
     get_token_expiry,
     verify_jwt_token,
 )
+from app.services.chat.group_chat_config import (
+    get_group_chat_team_refs,
+    is_allowed_group_chat_team,
+)
 from app.services.chat.operations import (
     call_executor_cancel,
     extract_model_override_info,
     fetch_retry_context,
     reset_subtask_for_retry,
     update_subtask_on_cancel,
-)
-from app.services.chat.group_chat_config import (
-    get_group_chat_team_refs,
-    is_allowed_group_chat_team,
 )
 from app.services.chat.rag import process_context_and_rag
 from app.services.chat.storage import session_manager
@@ -590,37 +590,58 @@ class ChatNamespace(socketio.AsyncNamespace):
                 )
                 if existing_task:
                     task_json = existing_task.json or {}
-            allowed_group_chat_team_refs = get_group_chat_team_refs(task_json)
 
-            task_is_group_chat = task_json.get("spec", {}).get("is_group_chat", False)
+            # For new group chat creation (task_id=None), build task_json from payload
+            if not payload.task_id and payload.is_group_chat:
+                task_json = {
+                    "spec": {
+                        "is_group_chat": True,
+                        "teamRefs": payload.team_refs or [],
+                    }
+                }
 
+            task_is_group_chat = (
+                task_json.get("spec", {}).get("is_group_chat", False)
+                or payload.is_group_chat
+            )
+
+            allowed_refs = get_group_chat_team_refs(task_json)
+            logger.info(
+                "[WS] chat:send group chat validation: task_id=%s team_id=%s allowed_refs=%s task_json_spec=%s",
+                payload.task_id,
+                payload.team_id,
+                allowed_refs,
+                task_json.get("spec", {}),
+            )
             if task_is_group_chat and not is_allowed_group_chat_team(
                 task_json, payload.team_id
             ):
                 logger.warning(
-                    "[WS] chat:send rejected disallowed group chat team: task_id=%s team_id=%s",
+                    "[WS] chat:send rejected disallowed group chat team: task_id=%s team_id=%s allowed_refs=%s",
                     payload.task_id,
                     payload.team_id,
+                    allowed_refs,
                 )
                 return {"error": "Selected agent is not available in this group chat."}
 
-            # Web group chat routes by selected team_id instead of @mention text.
-            # Keep mention-based trigger logic for non-group-chat flows only.
+            # Group chat: AI only responds when user @mentions the selected team.
+            # Non-group-chat: use mention-based trigger logic.
             team_name = team.name
-            should_trigger_ai = (
-                True
-                if task_is_group_chat or payload.is_group_chat
-                else should_trigger_ai_response(
+            if task_is_group_chat or payload.is_group_chat:
+                # Check if message contains @mention for the selected team
+                mention_pattern = f"@{team_name}"
+                should_trigger_ai = mention_pattern in payload.message
+            else:
+                should_trigger_ai = should_trigger_ai_response(
                     task_json,
                     payload.message,
                     team_name,
                     request_is_group_chat=payload.is_group_chat,
                 )
-            )
             logger.info(
                 f"[WS] chat:send group chat check: task_id={payload.task_id}, "
                 f"is_group_chat={task_json.get('spec', {}).get('is_group_chat', False)}, "
-                f"allowed_team_refs={len(allowed_group_chat_team_refs)}, "
+                f"allowed_team_refs={len(allowed_refs)}, "
                 f"team_name={team_name}, "
                 f"should_trigger_ai={should_trigger_ai}"
             )
@@ -670,12 +691,41 @@ class ChatNamespace(socketio.AsyncNamespace):
             if pipeline_info:
                 previous_bot_id = pipeline_info.get("current_stage_bot_id")
 
+            # Determine model configuration for group chat
+            # For group chats with team_refs containing per-team model configs, use the config
+            # for the currently selected team_id
+            model_id = payload.force_override_bot_model
+            force_override_bot_model = payload.force_override_bot_model is not None
+            force_override_bot_model_type = payload.force_override_bot_model_type
+
+            if payload.is_group_chat and payload.team_refs:
+                # Find the model config for the selected team
+                selected_team_ref = None
+                for ref in payload.team_refs:
+                    ref_id = ref.get("id") or ref.get("team_id")
+                    if ref_id == payload.team_id:
+                        selected_team_ref = ref
+                        break
+
+                if selected_team_ref:
+                    ref_model_id = selected_team_ref.get("model_id")
+                    ref_force_override = selected_team_ref.get(
+                        "force_override_bot_model"
+                    )
+                    if ref_model_id:
+                        model_id = ref_model_id
+                        force_override_bot_model = True
+                        logger.info(
+                            f"[WS] chat:send using per-team model config: "
+                            f"team_id={payload.team_id}, model_id={model_id}"
+                        )
+
             params = TaskCreationParams(
                 message=payload.message,
                 title=payload.title,
-                model_id=payload.force_override_bot_model,
-                force_override_bot_model=payload.force_override_bot_model is not None,
-                force_override_bot_model_type=payload.force_override_bot_model_type,
+                model_id=model_id,
+                force_override_bot_model=force_override_bot_model,
+                force_override_bot_model_type=force_override_bot_model_type,
                 is_group_chat=payload.is_group_chat,
                 git_url=payload.git_url,
                 git_repo=payload.git_repo,

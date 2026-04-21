@@ -120,6 +120,7 @@ def convert_to_group_chat(
         history_window = request.get("historyWindow", request.get("history_window"))
         if history_window is None and isinstance(group_chat_config, dict):
             history_window = group_chat_config.get("historyWindow")
+        logger.info("[convert-to-group-chat] Received team_refs: %s", team_refs)
 
     # Convert the task or update its group chat settings
     converted = task_member_service.convert_to_group_chat(

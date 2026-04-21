@@ -92,6 +92,9 @@ export default function ChatInput({
 }: ChatInputProps) {
   const { t, i18n } = useTranslation()
 
+  // Debug log for mentionableTeams
+  console.log('[ChatInput] mentionableTeams:', mentionableTeams, 'isGroupChat:', isGroupChat)
+
   // Get current language for tip text
   const currentLang = i18n.language?.startsWith('zh') ? 'zh' : 'en'
 

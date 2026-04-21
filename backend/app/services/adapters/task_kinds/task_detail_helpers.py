@@ -4,9 +4,12 @@
 
 """Helper functions for task detail response assembly."""
 
+import logging
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from sqlalchemy.orm import Session
+
+logger = logging.getLogger(__name__)
 
 from app.schemas.kind import Bot, Shell
 from app.schemas.task import SkillRef
@@ -168,6 +171,11 @@ def add_group_chat_info_to_task(
     """Add group chat metadata to a task detail dictionary."""
     from app.models.resource_member import MemberStatus, ResourceMember
     from app.models.share_link import ResourceType
+    from app.models.task import TaskResource
+    from shared.utils.group_chat_config import (
+        get_group_chat_history_window,
+        get_group_chat_team_refs,
+    )
 
     members = (
         db.query(ResourceMember)
@@ -186,6 +194,25 @@ def add_group_chat_info_to_task(
     task_dict["is_group_chat"] = is_group_chat
     task_dict["is_group_owner"] = task_dict.get("user_id") == user_id
     task_dict["member_count"] = len(members) if is_group_chat else None
+
+    # Add group chat team refs and config from task JSON
+    task_resource = (
+        db.query(TaskResource)
+        .filter(TaskResource.id == task_id, TaskResource.kind == "Task")
+        .first()
+    )
+    if task_resource and task_resource.json:
+        task_json = task_resource.json
+        team_refs = get_group_chat_team_refs(task_json)
+        logger.info(
+            "[add_group_chat_info_to_task] task_id=%s, team_refs from DB: %s",
+            task_id,
+            team_refs,
+        )
+        if team_refs:
+            task_dict["teamRefs"] = team_refs
+        history_window = get_group_chat_history_window(task_json)
+        task_dict["groupChatConfig"] = {"historyWindow": history_window}
 
 
 def get_requested_skills_from_task(task_crd: Any) -> Optional[List[SkillRef]]:

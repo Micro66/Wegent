@@ -129,6 +129,21 @@ export interface ChatMessageRequest {
     /** Model name for video/image generation */
     model?: string
   }
+  /** Team references for group chat (for new tasks) */
+  teamRefs?: Array<{
+    id: number
+    team_id: number
+    name: string
+    namespace: string
+    user_id?: number
+  }> | null
+  /** Group chat configuration (for new tasks) */
+  groupChatConfig?: {
+    historyWindow: {
+      maxDays: number
+      maxMessages: number
+    }
+  } | null
 }
 
 /**
@@ -680,6 +695,7 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
         immediateTaskId?: number
         currentUserId?: number
         currentUserName?: string
+        currentTeam?: Team | null
       }
     ): Promise<number> => {
       if (!isConnected) {
@@ -764,6 +780,8 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
         additional_skills: request.additional_skills,
         action: request.action,
         generate_params: request.generate_params,
+        team_refs: request.teamRefs,
+        group_chat_config: request.groupChatConfig,
       }
 
       try {

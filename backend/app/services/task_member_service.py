@@ -8,6 +8,7 @@ Service for task member (group chat) management.
 Uses the unified ResourceMember model instead of the legacy TaskMember table.
 """
 
+import copy
 import logging
 from datetime import datetime
 from typing import List, Optional
@@ -122,14 +123,19 @@ class TaskMemberService:
         if not task:
             raise HTTPException(status_code=404, detail="Task not found")
 
-        # Get current task JSON
-        task_json = task.json if isinstance(task.json, dict) else {}
+        # Get current task JSON - use deep copy to avoid modifying the original
+        task_json = copy.deepcopy(task.json) if isinstance(task.json, dict) else {}
         spec = task_json.get("spec", {})
         existing_team_ref = spec.get("teamRef")
+        logger.info("[convert_to_group_chat] Input team_refs: %s", team_refs)
         normalized_team_refs = [
-            team_ref for team_ref in (team_refs or get_group_chat_team_refs(task_json))
+            team_ref
+            for team_ref in (team_refs or get_group_chat_team_refs(task_json))
             if isinstance(team_ref, dict)
         ]
+        logger.info(
+            "[convert_to_group_chat] Normalized team_refs: %s", normalized_team_refs
+        )
         if not normalized_team_refs and isinstance(existing_team_ref, dict):
             normalized_team_refs = [existing_team_ref]
 
@@ -156,10 +162,22 @@ class TaskMemberService:
         spec["teamRef"] = normalized_team_refs[0]
         spec["teamRefs"] = normalized_team_refs
         spec["groupChatConfig"] = {"historyWindow": normalized_history_window}
+
+        logger.info(
+            "[convert_to_group_chat] Saving team_refs: %s", normalized_team_refs
+        )
         task_json["spec"] = spec
 
         # IMPORTANT: Mark the json field as modified so SQLAlchemy detects the change
+        logger.info("[convert_to_group_chat] task_json before save: %s", task_json)
+        logger.info(
+            "[convert_to_group_chat] task_json type: %s, spec type: %s, teamRefs type: %s",
+            type(task_json),
+            type(task_json.get("spec")),
+            type(task_json.get("spec", {}).get("teamRefs")),
+        )
         task.json = task_json
+        logger.info("[convert_to_group_chat] task.json assigned: %s", task.json)
         flag_modified(task, "json")
 
         # Sync to physical column for optimized queries
@@ -170,7 +188,22 @@ class TaskMemberService:
         db.commit()
         db.refresh(task)
 
-        logger.info("Task %s converted to group chat with %s team refs", task_id, len(normalized_team_refs))
+        # Verify what was actually saved to database
+        saved_json = task.json if isinstance(task.json, dict) else {}
+        saved_spec = saved_json.get("spec", {})
+        saved_team_refs = saved_spec.get("teamRefs", [])
+        logger.info(
+            "[convert_to_group_chat] After commit - saved teamRefs: %s", saved_team_refs
+        )
+        logger.info(
+            "[convert_to_group_chat] After commit - task.json type: %s", type(task.json)
+        )
+
+        logger.info(
+            "Task %s converted to group chat with %s team refs",
+            task_id,
+            len(normalized_team_refs),
+        )
         return True
 
     def get_member_count(self, db: Session, task_id: int) -> int:

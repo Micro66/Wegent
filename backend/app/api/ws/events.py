@@ -163,6 +163,9 @@ class ChatSendPayload(BaseModel):
     is_group_chat: bool = Field(
         False, description="Whether this is a group chat (for new tasks)"
     )
+    team_refs: Optional[List[dict]] = Field(
+        None, description="Team references for group chat (for new tasks)"
+    )
     contexts: Optional[List[ContextItem]] = Field(
         None, description="Context items (knowledge bases, etc.)"
     )

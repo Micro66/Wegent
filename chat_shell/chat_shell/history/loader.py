@@ -306,7 +306,7 @@ async def get_chat_history(
 async def _get_group_chat_history_window(task_id: int) -> dict[str, int]:
     """Load group chat history window configuration for a task."""
     if _is_http_mode():
-        from app.services.chat.group_chat_config import get_group_chat_history_window
+        from shared.utils.group_chat_config import get_group_chat_history_window
 
         return get_group_chat_history_window({})
 
@@ -317,7 +317,8 @@ def _get_group_chat_history_window_sync(task_id: int) -> dict[str, int]:
     """Load group chat history window directly from the backend database."""
     from app.db.session import SessionLocal
     from app.models.task import TaskResource
-    from app.services.chat.group_chat_config import get_group_chat_history_window
+
+    from shared.utils.group_chat_config import get_group_chat_history_window
 
     db = SessionLocal()
     try:
@@ -1092,13 +1093,10 @@ def _apply_group_chat_history_window(
         filtered = [
             message
             for message in filtered
-            if (
-                created_at := message.get("created_at")
-            )
-            is None
-            or datetime.fromisoformat(str(created_at).replace("Z", "+00:00")).astimezone(
-                timezone.utc
-            )
+            if (created_at := message.get("created_at")) is None
+            or datetime.fromisoformat(
+                str(created_at).replace("Z", "+00:00")
+            ).astimezone(timezone.utc)
             >= cutoff
         ]
 

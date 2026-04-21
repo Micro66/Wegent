@@ -488,6 +488,10 @@ class WorkspaceList(BaseModel):
 class TeamTaskRef(BaseModel):
     """Reference to a Team"""
 
+    id: Optional[int] = Field(
+        None,
+        description="Team ID (Kind.id). Used for stable team references in group chats.",
+    )
     name: str
     namespace: str = "default"
     user_id: Optional[int] = Field(
@@ -495,6 +499,11 @@ class TeamTaskRef(BaseModel):
         description="Team owner's user ID. Used for skill lookup in shared team scenarios. "
         "When set, allows downloading skills owned by the team owner without additional DB queries.",
     )
+
+    class Config:
+        extra = (
+            "allow"  # Allow extra fields like team_id, model_id for group chat configs
+        )
 
 
 class WorkspaceTaskRef(BaseModel):

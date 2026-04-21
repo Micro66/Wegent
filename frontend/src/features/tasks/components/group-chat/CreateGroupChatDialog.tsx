@@ -17,10 +17,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { buildGroupChatCreatePayload } from '@/apis/chat'
-import {
-  DEFAULT_GROUP_CHAT_HISTORY_WINDOW,
-  updateGroupChatSettings,
-} from '@/apis/group-chat'
+import { DEFAULT_GROUP_CHAT_HISTORY_WINDOW, updateGroupChatSettings } from '@/apis/group-chat'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useToast } from '@/hooks/use-toast'
 import { Team, Task } from '@/types/api'
@@ -35,17 +32,23 @@ interface CreateGroupChatDialogProps {
   onOpenChange: (open: boolean) => void
 }
 
+interface TeamModelConfig {
+  model: Model | null
+  forceOverride: boolean
+}
+
 export function CreateGroupChatDialog({ open, onOpenChange }: CreateGroupChatDialogProps) {
-  const { t } = useTranslation()
+  const { t } = useTranslation('chat')
   const { toast } = useToast()
   const router = useRouter()
   const [title, setTitle] = useState('')
   const [selectedTeamIds, setSelectedTeamIds] = useState<number[]>([])
   const [isCreating, setIsCreating] = useState(false)
-  const [selectedModel, setSelectedModel] = useState<Model | null>(null)
-  const [forceOverride, setForceOverride] = useState(false)
-  const [maxDays, setMaxDays] = useState(DEFAULT_GROUP_CHAT_HISTORY_WINDOW.maxDays)
-  const [maxMessages, setMaxMessages] = useState(DEFAULT_GROUP_CHAT_HISTORY_WINDOW.maxMessages)
+  const [teamModels, setTeamModels] = useState<Record<number, TeamModelConfig>>({})
+  const [maxDays, setMaxDays] = useState<number>(DEFAULT_GROUP_CHAT_HISTORY_WINDOW.maxDays)
+  const [maxMessages, setMaxMessages] = useState<number>(
+    DEFAULT_GROUP_CHAT_HISTORY_WINDOW.maxMessages
+  )
 
   const { teams, isTeamsLoading } = useTeamContext()
   const { sendMessage } = useChatStreamContext()
@@ -63,14 +66,18 @@ export function CreateGroupChatDialog({ open, onOpenChange }: CreateGroupChatDia
   const primarySelectedTeam = selectedTeams[0] || null
 
   const isFormValid = useMemo(() => {
-    return title.trim().length > 0 && selectedTeams.length > 0 && selectedModel !== null
-  }, [selectedModel, selectedTeams.length, title])
+    if (title.trim().length === 0 || selectedTeams.length === 0) return false
+    // Check that all selected teams have a model configured
+    return selectedTeams.every(team => {
+      const teamConfig = teamModels[team.id]
+      return teamConfig?.model != null
+    })
+  }, [teamModels, selectedTeams, title])
 
   const resetForm = () => {
     setTitle('')
     setSelectedTeamIds([])
-    setSelectedModel(null)
-    setForceOverride(false)
+    setTeamModels({})
     setMaxDays(DEFAULT_GROUP_CHAT_HISTORY_WINDOW.maxDays)
     setMaxMessages(DEFAULT_GROUP_CHAT_HISTORY_WINDOW.maxMessages)
     setIsCreating(false)
@@ -82,6 +89,20 @@ export function CreateGroupChatDialog({ open, onOpenChange }: CreateGroupChatDia
         ? currentIds.filter(currentId => currentId !== teamId)
         : [...currentIds, teamId]
     )
+  }
+
+  const setTeamModel = (teamId: number, model: Model | null) => {
+    setTeamModels(prev => ({
+      ...prev,
+      [teamId]: { ...prev[teamId], model },
+    }))
+  }
+
+  const setTeamForceOverride = (teamId: number, forceOverride: boolean) => {
+    setTeamModels(prev => ({
+      ...prev,
+      [teamId]: { ...prev[teamId], forceOverride },
+    }))
   }
 
   const handleCreate = async () => {
@@ -109,10 +130,33 @@ export function CreateGroupChatDialog({ open, onOpenChange }: CreateGroupChatDia
       return
     }
 
-    const groupChatPayload = buildGroupChatCreatePayload(selectedTeams, {
-      maxDays,
-      maxMessages,
+    // Build team refs with model configurations
+    const teamRefsWithModels = selectedTeams.map(team => {
+      const config = teamModels[team.id]
+      return {
+        id: team.id,
+        team_id: team.id,
+        name: team.name,
+        namespace: team.namespace || 'default',
+        user_id: team.user_id,
+        model_id: config?.model?.name === '__default__' ? undefined : config?.model?.name,
+        force_override_bot_model: config?.forceOverride || false,
+      }
     })
+
+    const groupChatPayload = buildGroupChatCreatePayload(
+      selectedTeams,
+      {
+        maxDays,
+        maxMessages,
+      },
+      teamRefsWithModels
+    )
+    console.log('[CreateGroupChatDialog] teamRefsWithModels:', teamRefsWithModels)
+    console.log('[CreateGroupChatDialog] groupChatPayload:', groupChatPayload)
+
+    // Get primary team model config for initial message
+    const primaryConfig = teamModels[primarySelectedTeam.id]
 
     setIsCreating(true)
 
@@ -124,8 +168,8 @@ export function CreateGroupChatDialog({ open, onOpenChange }: CreateGroupChatDia
           task_id: undefined,
           title,
           model_id:
-            selectedModel?.name === '__default__' ? undefined : selectedModel?.name || undefined,
-          force_override_bot_model: forceOverride,
+            primaryConfig?.model?.name === '__default__' ? undefined : primaryConfig?.model?.name,
+          force_override_bot_model: primaryConfig?.forceOverride || false,
           is_group_chat: true,
           ...groupChatPayload,
         } as Parameters<typeof sendMessage>[0],
@@ -136,6 +180,7 @@ export function CreateGroupChatDialog({ open, onOpenChange }: CreateGroupChatDia
           currentUserId: user?.id,
           currentUserName: user?.user_name,
           onMessageSent: (_localMessageId: string, realTaskId: number) => {
+            console.log('[CreateGroupChatDialog] groupChatPayload:', groupChatPayload)
             void updateGroupChatSettings(realTaskId, groupChatPayload)
               .then(() => {
                 onOpenChange(false)
@@ -158,7 +203,8 @@ export function CreateGroupChatDialog({ open, onOpenChange }: CreateGroupChatDia
               .catch(error => {
                 toast({
                   title: t('groupChat.create.failed'),
-                  description: error instanceof Error ? error.message : t('groupChat.create.failedDesc'),
+                  description:
+                    error instanceof Error ? error.message : t('groupChat.create.failedDesc'),
                   variant: 'destructive',
                 })
                 setIsCreating(false)
@@ -187,7 +233,7 @@ export function CreateGroupChatDialog({ open, onOpenChange }: CreateGroupChatDia
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
+      <DialogContent className="max-h-[80vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{t('groupChat.create.title')}</DialogTitle>
           <DialogDescription>{t('groupChat.create.description')}</DialogDescription>
@@ -210,7 +256,7 @@ export function CreateGroupChatDialog({ open, onOpenChange }: CreateGroupChatDia
             <Label>{t('groupChat.create.agentsLabel')}</Label>
             <div className="space-y-2">
               {isTeamsLoading ? (
-                <p className="text-sm text-text-secondary">{t('actions.loading')}</p>
+                <p className="text-sm text-text-secondary">{t('common:actions.loading')}</p>
               ) : chatTeams.length === 0 ? (
                 <p className="text-sm text-text-secondary">{t('groupChat.create.noChatTeams')}</p>
               ) : (
@@ -237,7 +283,9 @@ export function CreateGroupChatDialog({ open, onOpenChange }: CreateGroupChatDia
 
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-2">
-              <Label htmlFor="group-chat-history-days">{t('groupChat.create.historyDaysLabel')}</Label>
+              <Label htmlFor="group-chat-history-days">
+                {t('groupChat.create.historyDaysLabel')}
+              </Label>
               <Input
                 id="group-chat-history-days"
                 data-testid="group-chat-history-days-input"
@@ -257,39 +305,50 @@ export function CreateGroupChatDialog({ open, onOpenChange }: CreateGroupChatDia
                 type="number"
                 min={1}
                 value={String(maxMessages)}
-                onChange={event =>
-                  setMaxMessages(Math.max(1, Number(event.target.value) || 1))
-                }
+                onChange={event => setMaxMessages(Math.max(1, Number(event.target.value) || 1))}
               />
             </div>
           </div>
 
-          {primarySelectedTeam && (
-            <div className="space-y-2">
-              <Label>{t('models.label')}</Label>
-              <ModelSelector
-                selectedModel={selectedModel}
-                setSelectedModel={setSelectedModel}
-                forceOverride={forceOverride}
-                setForceOverride={setForceOverride}
-                selectedTeam={primarySelectedTeam}
-                disabled={isCreating}
-                isLoading={false}
-              />
+          {/* Per-team model selectors */}
+          {selectedTeams.length > 0 && (
+            <div className="space-y-4 border-t border-border pt-4">
+              <Label className="font-medium">
+                {t('groupChat.create.modelsLabel') || '智能体模型配置'}
+              </Label>
+              {selectedTeams.map(team => {
+                const config = teamModels[team.id] || { model: null, forceOverride: false }
+                return (
+                  <div key={team.id} className="space-y-2 border border-border rounded-lg p-3">
+                    <div className="flex items-center gap-2 text-sm font-medium">
+                      <span className="text-text-primary">{team.name}</span>
+                    </div>
+                    <ModelSelector
+                      selectedModel={config.model}
+                      setSelectedModel={model => setTeamModel(team.id, model)}
+                      forceOverride={config.forceOverride}
+                      setForceOverride={force => setTeamForceOverride(team.id, force)}
+                      selectedTeam={team}
+                      disabled={isCreating}
+                      isLoading={false}
+                    />
+                  </div>
+                )
+              })}
             </div>
           )}
         </div>
 
         <div className="flex justify-end gap-2">
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isCreating}>
-            {t('actions.cancel')}
+            {t('common:actions.cancel')}
           </Button>
           <Button
             data-testid="group-chat-create-button"
             onClick={handleCreate}
             disabled={isCreating || !isFormValid}
           >
-            {isCreating ? t('actions.creating') : t('actions.create')}
+            {isCreating ? t('common:actions.creating') : t('common:actions.create')}
           </Button>
         </div>
       </DialogContent>

@@ -148,6 +148,10 @@ export interface ChatSendPayload {
     /** Duration in seconds for video generation */
     duration?: number
   }
+  /** Team references for group chat (for new tasks) - snake_case for backend compatibility */
+  team_refs?: TaskTeamRef[] | null
+  /** Group chat configuration (for new tasks) - snake_case for backend compatibility */
+  group_chat_config?: GroupChatConfig | null
 }
 
 export interface ChatCancelPayload {

@@ -22,6 +22,8 @@ export interface GroupChatTeamRefPayload {
   name: string
   namespace: string
   user_id?: number | null
+  model_id?: string
+  force_override_bot_model?: boolean
 }
 
 export interface GroupChatCreatePayload {
@@ -34,16 +36,30 @@ export function buildGroupChatCreatePayload(
   historyWindow: {
     maxDays: number
     maxMessages: number
-  }
+  },
+  teamRefsWithModels?: Array<{
+    id: number
+    team_id: number
+    name: string
+    namespace: string
+    user_id?: number | null
+    model_id?: string
+    force_override_bot_model?: boolean
+  }>
 ): GroupChatCreatePayload {
-  return {
-    teamRefs: teams.map(team => ({
+  // Use provided teamRefsWithModels if available, otherwise build from teams
+  const teamRefs =
+    teamRefsWithModels ||
+    teams.map(team => ({
       id: team.id,
       team_id: team.id,
       name: team.name,
-      namespace: team.namespace,
+      namespace: team.namespace || 'default',
       user_id: team.user_id,
-    })),
+    }))
+
+  return {
+    teamRefs,
     groupChatConfig: {
       historyWindow,
     },

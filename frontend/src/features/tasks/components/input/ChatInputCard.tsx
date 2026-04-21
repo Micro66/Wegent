@@ -238,34 +238,6 @@ export function ChatInputCard({
         </div>
       )}
 
-      {isGroupChat && groupChatTeams.length > 0 && (
-        <div
-          className="flex flex-wrap items-center gap-2 px-4 mb-2"
-          data-testid="group-chat-target-selector"
-        >
-          {groupChatTeams.map(team => {
-            const isActive = groupChatTargetTeam?.id === team.id
-
-            return (
-              <button
-                key={team.id}
-                type="button"
-                className={`h-9 rounded-md border px-3 text-sm transition-colors ${
-                  isActive
-                    ? 'border-primary bg-primary/10 text-primary'
-                    : 'border-border bg-base text-text-secondary hover:bg-surface'
-                }`}
-                data-testid={`group-chat-target-option-${team.id}`}
-                aria-pressed={isActive}
-                onClick={() => onGroupChatTargetChange?.(team)}
-              >
-                {team.name}
-              </button>
-            )
-          })}
-        </div>
-      )}
-
       {/* Chat Input Card */}
       <div
         className={`relative w-full max-w-[820px] mx-auto rounded-3xl border bg-base shadow-card-hover transition-colors flex flex-col justify-between ${isDragging ? 'border-primary ring-2 ring-primary/20' : 'border-primary/40'}`}
@@ -328,7 +300,9 @@ export function ChatInputCard({
               canSubmit={canSubmit}
               tipText={tipText}
               badge={
-                selectedTeam && !isUsingDefaultTeam ? (
+                // In group chat mode, don't show selected team badge
+                // User selects target via @mention instead
+                !isGroupChat && selectedTeam && !isUsingDefaultTeam ? (
                   <SelectedTeamBadge
                     team={selectedTeam}
                     showClearButton={true}
