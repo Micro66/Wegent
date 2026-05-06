@@ -1993,4 +1993,61 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         return resolved
 
 
+    def clone_bot(
+        self,
+        db: Session,
+        *,
+        bot_id: int,
+        user_id: int,
+        new_name: str,
+        namespace: str = "default",
+    ) -> Dict[str, Any]:
+        """
+        Clone an existing bot with a new name.
+        Copies all config fields; ghost/shell/model refs are preserved by value.
+        """
+        from app.schemas.bot import BotCreate
+        from app.schemas.kind import KnowledgeBaseDefaultRef, SkillRefMeta
+
+        original = (
+            db.query(Kind)
+            .filter(
+                Kind.id == bot_id,
+                Kind.kind == "Bot",
+                Kind.is_active == True,
+            )
+            .first()
+        )
+        if not original:
+            raise HTTPException(status_code=404, detail="Bot not found for cloning")
+
+        # Get full bot dict (decrypted agent_config, resolved shell_name, etc.)
+        ghost, shell, model = self._get_bot_components(db, original, original.user_id)
+        bot_dict = self._convert_to_bot_dict(original, ghost, shell, model)
+
+        # Build knowledge base refs
+        kb_refs = None
+        if bot_dict.get("default_knowledge_base_refs"):
+            kb_refs = [
+                KnowledgeBaseDefaultRef(**ref)
+                for ref in bot_dict["default_knowledge_base_refs"]
+            ]
+
+        bot_create = BotCreate(
+            name=new_name,
+            shell_name=bot_dict["shell_name"],
+            agent_config=bot_dict.get("agent_config") or {},
+            system_prompt=bot_dict.get("system_prompt"),
+            mcp_servers=bot_dict.get("mcp_servers"),
+            default_knowledge_base_refs=kb_refs,
+            skills=bot_dict.get("skills"),
+            skill_refs=bot_dict.get("skill_refs"),
+            preload_skills=bot_dict.get("preload_skills"),
+            preload_skill_refs=bot_dict.get("preload_skill_refs"),
+            namespace=namespace,
+        )
+
+        return self.create_with_user(db=db, obj_in=bot_create, user_id=user_id)
+
+
 bot_kinds_service = BotKindsService(Kind)

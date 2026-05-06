@@ -2143,4 +2143,121 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         }
 
 
+    def copy_team(
+        self,
+        db: Session,
+        *,
+        team_id: int,
+        user_id: int,
+    ) -> Dict[str, Any]:
+        """
+        Copy a team. Creates a new team with 'Copy of {name}'.
+
+        Solo mode: deep copy — also clones the leader bot.
+        Non-solo mode: shallow copy — new team references the same bots.
+        """
+        from app.services.adapters.bot_kinds import bot_kinds_service
+        from app.schemas.team import TeamCreate, BotInfo
+
+        # Fetch the original team
+        original = (
+            db.query(Kind)
+            .filter(
+                Kind.id == team_id,
+                Kind.kind == "Team",
+                Kind.is_active == True,
+            )
+            .first()
+        )
+        if not original:
+            raise HTTPException(status_code=404, detail="Team not found")
+
+        spec = original.json.get("spec", {})
+        collaboration_model = spec.get("collaborationModel", "pipeline")
+        members = spec.get("members", [])
+        bind_mode = spec.get("bind_mode", ["chat"])
+        description = original.json.get("metadata", {}).get("description", "")
+        icon = spec.get("icon")
+        requires_workspace = spec.get("requiresWorkspace", True)
+        workflow = {"mode": collaboration_model}
+
+        # Build bots list — for solo mode, clone the leader bot
+        new_bots: list[Dict[str, Any]] = []
+
+        if collaboration_model == "solo" and members:
+            leader_member = next(
+                (m for m in members if m.get("role") == "leader"), members[0]
+            )
+            bot_ref = leader_member.get("botRef", {})
+
+            # Find the original bot Kind record
+            original_bot = (
+                db.query(Kind)
+                .filter(
+                    Kind.kind == "Bot",
+                    Kind.name == bot_ref.get("name"),
+                    Kind.namespace == bot_ref.get("namespace", original.namespace),
+                    Kind.is_active == True,
+                )
+                .first()
+            )
+            if not original_bot:
+                raise HTTPException(status_code=400, detail="Leader bot not found")
+
+            # Clone the bot
+            cloned_bot = bot_kinds_service.clone_bot(
+                db,
+                bot_id=original_bot.id,
+                user_id=user_id,
+                new_name=f"Copy of {original_bot.name}",
+                namespace=original.namespace,
+            )
+            new_bots.append({
+                "bot_id": cloned_bot["id"],
+                "bot_prompt": leader_member.get("prompt", ""),
+                "role": "leader",
+            })
+        else:
+            # Non-solo: resolve bot_ids from member botRefs
+            for member in members:
+                bot_ref = member.get("botRef", {})
+                bot = (
+                    db.query(Kind)
+                    .filter(
+                        Kind.kind == "Bot",
+                        Kind.name == bot_ref.get("name"),
+                        Kind.namespace == bot_ref.get("namespace", original.namespace),
+                        Kind.is_active == True,
+                    )
+                    .first()
+                )
+                if bot:
+                    new_bots.append({
+                        "bot_id": bot.id,
+                        "bot_prompt": member.get("prompt", ""),
+                        "role": member.get("role", ""),
+                    })
+
+        # Determine group_name for permission check
+        group_name = original.namespace if original.namespace != "default" else None
+
+        team_create = TeamCreate(
+            name=f"Copy of {original.name}",
+            description=description or None,
+            workflow=workflow,
+            bind_mode=bind_mode,
+            bots=[BotInfo(**b) for b in new_bots],
+            namespace=original.namespace,
+            icon=icon,
+            requires_workspace=requires_workspace,
+        )
+
+        return self.create_with_user(
+            db=db,
+            obj_in=team_create,
+            user_id=user_id,
+            group_name=group_name,
+        )
+
+
 team_kinds_service = TeamKindsService(Kind)
