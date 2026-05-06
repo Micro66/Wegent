@@ -271,6 +271,8 @@
     "copy_name": "复制智能体名称",
     "copy_name_success": "智能体名称已复制",
     "copy_name_failed": "复制智能体名称失败",
+    "copy_success": "复制成功",
+    "copy_failed": "复制失败",
     "more": "更多",
     "more_teams": "查看更多智能体",
     "more_actions": "更多操作",
