@@ -425,8 +425,9 @@ export default function TeamList({
 
   // Check if copy button should be shown (same permission as create)
   const shouldShowCopy = (team: Team) => {
-    // For public teams, copy is allowed for personal use
-    if (isPublicTeam(team)) return true
+    // Read-only teams (public or shared from others) cannot be copied
+    if (isPublicTeam(team)) return false
+    if (isSharedTeam(team)) return false
     // For group teams, check group permissions (need create permission)
     if (isGroupTeam(team)) {
       return canDeleteGroupResource(team.namespace!) // Maintainer/Owner can create

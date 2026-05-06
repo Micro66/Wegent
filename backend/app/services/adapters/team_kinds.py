@@ -2142,6 +2142,34 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             "preload_skills": sorted(all_preload_skills),
         }
 
+    def _find_available_name(
+        self,
+        db: Session,
+        *,
+        base_name: str,
+        kind: str,
+        user_id: int,
+        namespace: str,
+    ) -> str:
+        """Return the first available name: base_name → base_name (2) → base_name (3) ..."""
+        candidate = base_name
+        counter = 2
+        while True:
+            existing = (
+                db.query(Kind)
+                .filter(
+                    Kind.kind == kind,
+                    Kind.name == candidate,
+                    Kind.namespace == namespace,
+                    Kind.user_id == user_id,
+                    Kind.is_active == True,
+                )
+                .first()
+            )
+            if not existing:
+                return candidate
+            candidate = f"{base_name} ({counter})"
+            counter += 1
 
     def copy_team(
         self,
@@ -2156,8 +2184,8 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         Solo mode: deep copy — also clones the leader bot.
         Non-solo mode: shallow copy — new team references the same bots.
         """
+        from app.schemas.team import BotInfo, TeamCreate
         from app.services.adapters.bot_kinds import bot_kinds_service
-        from app.schemas.team import TeamCreate, BotInfo
 
         # Fetch the original team
         original = (
@@ -2205,19 +2233,29 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             if not original_bot:
                 raise HTTPException(status_code=400, detail="Leader bot not found")
 
+            # Find available bot name (auto-increment on conflict)
+            bot_name = bot_kinds_service.find_available_bot_name(
+                db,
+                base_name=f"Copy of {original_bot.name}",
+                user_id=user_id,
+                namespace=original.namespace,
+            )
+
             # Clone the bot
             cloned_bot = bot_kinds_service.clone_bot(
                 db,
                 bot_id=original_bot.id,
                 user_id=user_id,
-                new_name=f"Copy of {original_bot.name}",
+                new_name=bot_name,
                 namespace=original.namespace,
             )
-            new_bots.append({
-                "bot_id": cloned_bot["id"],
-                "bot_prompt": leader_member.get("prompt", ""),
-                "role": "leader",
-            })
+            new_bots.append(
+                {
+                    "bot_id": cloned_bot["id"],
+                    "bot_prompt": leader_member.get("prompt", ""),
+                    "role": "leader",
+                }
+            )
         else:
             # Non-solo: resolve bot_ids from member botRefs
             for member in members:
@@ -2234,17 +2272,27 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                     .first()
                 )
                 if bot:
-                    new_bots.append({
-                        "bot_id": bot.id,
-                        "bot_prompt": member.get("prompt", ""),
-                        "role": member.get("role", ""),
-                    })
+                    new_bots.append(
+                        {
+                            "bot_id": bot.id,
+                            "bot_prompt": member.get("prompt", ""),
+                            "role": member.get("role", ""),
+                        }
+                    )
 
         # Determine group_name for permission check
         group_name = original.namespace if original.namespace != "default" else None
 
+        team_name = self._find_available_name(
+            db,
+            base_name=f"Copy of {original.name}",
+            kind="Team",
+            user_id=user_id,
+            namespace=original.namespace,
+        )
+
         team_create = TeamCreate(
-            name=f"Copy of {original.name}",
+            name=team_name,
             description=description or None,
             workflow=workflow,
             bind_mode=bind_mode,

@@ -309,7 +309,7 @@
     "share_success_message_suffix": "\" with your friends!",
     "share_link": "Share Link",
     "copy_link": "Copy Link",
-    "copy_success": "Link copied",
+    "copy_link_success": "Link copied",
     "group_required_title": "Please select a group first",
     "group_required_message": "When creating an agent in group mode, a group must be selected first",
     "share_instructions_content1": "Copy and send this link to others. They can use your shared agent to complete tasks directly.",

@@ -1992,6 +1992,33 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
 
         return resolved
 
+    def find_available_bot_name(
+        self,
+        db: Session,
+        *,
+        base_name: str,
+        user_id: int,
+        namespace: str = "default",
+    ) -> str:
+        """Find an available bot name by appending (2), (3), etc. if needed."""
+        candidate = base_name
+        counter = 2
+        while True:
+            existing = (
+                db.query(Kind)
+                .filter(
+                    Kind.kind == "Bot",
+                    Kind.name == candidate,
+                    Kind.namespace == namespace,
+                    Kind.user_id == user_id,
+                    Kind.is_active == True,
+                )
+                .first()
+            )
+            if not existing:
+                return candidate
+            candidate = f"{base_name} ({counter})"
+            counter += 1
 
     def clone_bot(
         self,
