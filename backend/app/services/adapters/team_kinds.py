@@ -2228,7 +2228,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                         Kind.kind == "Bot",
                         Kind.name == bot_ref.get("name"),
                         Kind.namespace == bot_ref.get("namespace", original.namespace),
-                    Kind.user_id == original.user_id,
+                        Kind.user_id == original.user_id,
                         Kind.is_active == True,
                     )
                     .first()

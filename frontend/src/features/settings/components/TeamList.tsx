@@ -596,6 +596,7 @@ export default function TeamList({
                               disabled={copyingTeamId === team.id}
                               title={t('teams.copy')}
                               className="h-7 w-7 sm:h-8 sm:w-8"
+                              data-testid={`copy-team-button-${team.id}`}
                             >
                               {copyingTeamId === team.id ? (
                                 <Loader2 className="w-3.5 h-3.5 sm:w-4 sm:h-4 animate-spin" />
