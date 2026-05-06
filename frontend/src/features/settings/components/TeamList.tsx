@@ -19,7 +19,13 @@ import {
   SparklesIcon,
 } from '@heroicons/react/24/outline'
 import { Bot, Team } from '@/types/api'
-import { fetchTeamsList, deleteTeam, shareTeam, checkTeamRunningTasks, copyTeam } from '../services/teams'
+import {
+  fetchTeamsList,
+  deleteTeam,
+  shareTeam,
+  checkTeamRunningTasks,
+  copyTeam,
+} from '../services/teams'
 import { CheckRunningTasksResponse } from '@/apis/common'
 import { fetchBotsList } from '../services/bots'
 import TeamEditDialog from './TeamEditDialog'
@@ -171,6 +177,10 @@ export default function TeamList({
     try {
       const copied = await copyTeam(team.id)
       setTeamsSorted(prev => [copied, ...prev])
+      // Refresh bots so the cloned bot (solo mode) is available in edit dialog
+      fetchBotsList(scope, groupName)
+        .then(setBotsSorted)
+        .catch(() => {})
       toast({
         title: t('teams.copy_success'),
       })
