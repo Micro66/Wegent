@@ -203,7 +203,9 @@ def delete_team(
     return {"message": "Team deactivated successfully"}
 
 
-@router.post("/{team_id}/copy", response_model=TeamInDB, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/{team_id}/copy", response_model=TeamInDB, status_code=status.HTTP_201_CREATED
+)
 def copy_team(
     team_id: int,
     current_user: User = Depends(security.get_current_user),
