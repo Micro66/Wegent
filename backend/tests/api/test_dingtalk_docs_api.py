@@ -12,9 +12,9 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
+from app.api.dependencies import get_db
 from app.api.endpoints.dingtalk_docs import router
 from app.core import security
-from app.api.dependencies import get_db
 from app.models.dingtalk_doc import DingtalkSyncedNode
 from app.models.user import User
 
@@ -188,9 +188,7 @@ class TestSyncDingtalkDocs:
         "app.api.endpoints.dingtalk_docs.DingTalkDocService.is_configured",
         return_value=True,
     )
-    @patch(
-        "app.api.endpoints.dingtalk_docs.DingTalkDocService.sync_dingtalk_docs"
-    )
+    @patch("app.api.endpoints.dingtalk_docs.DingTalkDocService.sync_dingtalk_docs")
     def test_returns_sync_result_on_success(
         self,
         mock_sync: MagicMock,

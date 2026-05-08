@@ -247,9 +247,7 @@ export function CreateKnowledgeBaseDialog({
     if (t === 'dingtalk') return 'personal'
     return t || 'personal'
   }
-  const effectiveScope = mapScope(
-    showGroupSelector && selectedGroup ? selectedGroup.type : scope
-  )
+  const effectiveScope = mapScope(showGroupSelector && selectedGroup ? selectedGroup.type : scope)
   const effectiveGroupName =
     showGroupSelector && selectedGroup && selectedGroup.type === 'group'
       ? selectedGroup.name
