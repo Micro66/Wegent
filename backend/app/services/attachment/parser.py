@@ -988,8 +988,13 @@ class DocumentParser:
             except Exception:
                 pass
 
-            # Encode image to base64 for vision models
-            image_base64 = base64.b64encode(binary_data).decode("utf-8")
+            # Force full image load to validate pixel data (Image.open is lazy)
+            img.load()
+
+            # Re-encode to PNG to ensure valid image data for vision models
+            output_buf = io.BytesIO()
+            img.save(output_buf, format="PNG")
+            image_base64 = base64.b64encode(output_buf.getvalue()).decode("utf-8")
 
             return text, image_base64
 
