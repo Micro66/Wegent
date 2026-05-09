@@ -443,7 +443,7 @@ class ResponsesAPIEventParser:
                         if event_type == ResponsesAPIStreamEvents.MCP_CALL_FAILED.value
                         else "completed"
                     ),
-                    "error": data.get("error"),
+                    "error": data.get("failure_reason"),
                 },
                 message_id=message_id,
             )
