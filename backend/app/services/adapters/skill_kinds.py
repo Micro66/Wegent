@@ -285,6 +285,9 @@ class SkillKindsService:
                 detail=f"Skill name '{name}' already exists in namespace '{namespace}'",
             )
 
+        # Sanitize ZIP: strip mcpServers from SKILL.md before storage
+        file_content = SkillValidator.sanitize_zip(file_content)
+
         # Validate ZIP package and extract metadata
         metadata = SkillValidator.validate_zip(file_content, file_name)
 
@@ -304,7 +307,6 @@ class SkillKindsService:
                 "config": metadata.get("config"),
                 "tools": metadata.get("tools"),
                 "provider": metadata.get("provider"),
-                "mcpServers": metadata.get("mcpServers"),
                 "preload": metadata.get("preload", False),
                 "source": source,
             },
@@ -668,6 +670,9 @@ class SkillKindsService:
         if not skill_kind:
             raise HTTPException(status_code=404, detail="Skill not found")
 
+        # Sanitize ZIP: strip mcpServers from SKILL.md before storage
+        file_content = SkillValidator.sanitize_zip(file_content)
+
         # Validate new ZIP package
         metadata = SkillValidator.validate_zip(file_content, file_name)
 
@@ -685,7 +690,6 @@ class SkillKindsService:
                 "config": metadata.get("config"),
                 "tools": metadata.get("tools"),
                 "provider": metadata.get("provider"),
-                "mcpServers": metadata.get("mcpServers"),
                 "preload": metadata.get("preload", False),
             }
         )
