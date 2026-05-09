@@ -981,13 +981,12 @@ class DocumentParser:
             text += f"颜色模式: {mode}\n"
             text += f"文件大小: {len(binary_data)} 字节"
 
-            # Try to extract EXIF data if available
-            if hasattr(img, "_getexif") and img._getexif():
-                text += "\n\n[EXIF 信息]"
-                exif_data = img._getexif()
-                if exif_data:
-                    # Just mention EXIF is available, don't extract all
-                    text += "\n包含 EXIF 元数据"
+            # Try to extract EXIF data if available (JPEG only; PNG raises OSError)
+            try:
+                if hasattr(img, "_getexif") and img._getexif():
+                    text += "\n\n[EXIF 信息]\n包含 EXIF 元数据"
+            except Exception:
+                pass
 
             # Encode image to base64 for vision models
             image_base64 = base64.b64encode(binary_data).decode("utf-8")
