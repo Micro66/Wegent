@@ -646,9 +646,9 @@ test.describe('Chat Image Browser E2E with Mock Model Server', () => {
     // Dismiss any onboarding tour overlay before clicking input
     await dismissOnboardingTour(page)
 
-    // For contentEditable elements, use pressSequentially to ensure input events fire correctly
+    // For contentEditable elements, click to focus then use keyboard.type() to trigger React onInput
     await messageInput.click()
-    await messageInput.pressSequentially('What is in this image?')
+    await page.keyboard.type('What is in this image?')
 
     // Step 5: Send message
     console.log('Sending message...')
@@ -789,9 +789,9 @@ test.describe('Chat Image Browser E2E with Mock Model Server', () => {
     // Dismiss any onboarding tour overlay before clicking input
     await dismissOnboardingTour(page)
 
-    // For contentEditable elements, use pressSequentially to ensure input events fire correctly
+    // For contentEditable elements, click to focus then use keyboard.type() to trigger React onInput
     await messageInput.click()
-    await messageInput.pressSequentially('Describe this image')
+    await page.keyboard.type('Describe this image')
 
     // Look for send button
     const sendButton = page
