@@ -992,11 +992,16 @@ class DocumentParser:
             img.load()
 
             # Re-encode to PNG to ensure valid image data for vision models
-            # PNG encoder only supports: 1, L, LA, I, P, RGB, RGBA — convert others
-            if img.mode not in ("1", "L", "LA", "I", "P", "RGB", "RGBA"):
-                img = img.convert("RGB")
             output_buf = io.BytesIO()
-            img.save(output_buf, format="PNG")
+            png_img = img
+            if img.mode == "CMYK":
+                png_img = img.convert("RGB")
+            elif img.mode == "P" and "transparency" in img.info:
+                png_img = img.convert("RGBA")
+            elif img.mode not in {"1", "L", "LA", "RGB", "RGBA", "P"}:
+                png_img = img.convert("RGB")
+
+            png_img.save(output_buf, format="PNG")
             image_base64 = base64.b64encode(output_buf.getvalue()).decode("utf-8")
 
             return text, image_base64
