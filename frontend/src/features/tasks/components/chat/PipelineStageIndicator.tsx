@@ -68,16 +68,7 @@ const PipelineStageIndicator = memo(function PipelineStageIndicator({
 
     const cleanup = registerChatHandlers({
       onChatDone: data => {
-        console.log(
-          '[PipelineStageIndicator] chat:done received:',
-          data,
-          'taskId:',
-          taskId,
-          'current taskStatus:',
-          taskStatus
-        )
         if (data.task_id === taskId) {
-          console.log('[PipelineStageIndicator] Triggering re-fetch via chatDoneKey')
           setChatDoneKey(k => k + 1)
         }
       },
@@ -106,19 +97,12 @@ const PipelineStageIndicator = memo(function PipelineStageIndicator({
       onStageInfoChange?.(null)
     }
 
-    console.log('[PipelineStageIndicator] Fetching stage info:', {
-      taskId,
-      taskStatus,
-      chatDoneKey,
-    })
-
     const fetchStageInfo = async () => {
       setLoading(true)
       try {
         const info = await taskApis.getPipelineStageInfo(taskId)
         if (!isActive) return
 
-        console.log('[PipelineStageIndicator] Stage info fetched:', info)
         stageInfoTaskIdRef.current = taskId
         setStageInfoState({ taskId, info })
         onStageInfoChange?.(info)
