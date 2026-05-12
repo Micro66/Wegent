@@ -608,6 +608,12 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
 
       // Also update selected task detail if it's the same task
       if (selectedTask && selectedTask.id === data.task_id) {
+        console.log(
+          '[taskContext] task:status received for selected task:',
+          data,
+          'current status:',
+          selectedTaskDetail?.status
+        )
         setSelectedTaskDetail(prev => {
           if (!prev) return prev
           return {

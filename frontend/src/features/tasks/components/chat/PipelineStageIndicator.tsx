@@ -10,6 +10,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { taskApis, PipelineStageInfo } from '@/apis/tasks'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
+import { useSocket } from '@/contexts/SocketContext'
 
 interface PipelineStageIndicatorProps {
   taskId: number | null
@@ -48,15 +49,44 @@ const PipelineStageIndicator = memo(function PipelineStageIndicator({
   onNextStepClick,
 }: PipelineStageIndicatorProps) {
   const { t } = useTranslation()
+  const { registerChatHandlers } = useSocket()
   const [stageInfoState, setStageInfoState] = useState<{
     taskId: number
     info: PipelineStageInfo
   } | null>(null)
   const [_loading, setLoading] = useState(false)
+  // Incremented on chat:done to force re-fetch regardless of taskStatus change
+  const [chatDoneKey, setChatDoneKey] = useState(0)
   const stageInfoTaskIdRef = useRef<number | null>(null)
   const stageInfo = stageInfoState?.taskId === taskId ? stageInfoState.info : null
 
-  // Fetch pipeline stage info when task changes or status updates
+  // Re-fetch when any subtask completes for this task (chat:done → task room)
+  // This handles the case where taskStatus doesn't change between pipeline stages
+  // (e.g., both stage 0 and stage 1 emit "COMPLETED", so taskStatus stays "COMPLETED")
+  useEffect(() => {
+    if (!taskId || collaborationModel !== 'pipeline') return
+
+    const cleanup = registerChatHandlers({
+      onChatDone: data => {
+        console.log(
+          '[PipelineStageIndicator] chat:done received:',
+          data,
+          'taskId:',
+          taskId,
+          'current taskStatus:',
+          taskStatus
+        )
+        if (data.task_id === taskId) {
+          console.log('[PipelineStageIndicator] Triggering re-fetch via chatDoneKey')
+          setChatDoneKey(k => k + 1)
+        }
+      },
+    })
+
+    return cleanup
+  }, [taskId, collaborationModel, registerChatHandlers, taskStatus])
+
+  // Fetch pipeline stage info when task changes, status updates, or any subtask completes
   useEffect(() => {
     let isActive = true
 
@@ -76,12 +106,19 @@ const PipelineStageIndicator = memo(function PipelineStageIndicator({
       onStageInfoChange?.(null)
     }
 
+    console.log('[PipelineStageIndicator] Fetching stage info:', {
+      taskId,
+      taskStatus,
+      chatDoneKey,
+    })
+
     const fetchStageInfo = async () => {
       setLoading(true)
       try {
         const info = await taskApis.getPipelineStageInfo(taskId)
         if (!isActive) return
 
+        console.log('[PipelineStageIndicator] Stage info fetched:', info)
         stageInfoTaskIdRef.current = taskId
         setStageInfoState({ taskId, info })
         onStageInfoChange?.(info)
@@ -104,7 +141,7 @@ const PipelineStageIndicator = memo(function PipelineStageIndicator({
     return () => {
       isActive = false
     }
-  }, [taskId, taskStatus, collaborationModel, onStageInfoChange])
+  }, [taskId, taskStatus, chatDoneKey, collaborationModel, onStageInfoChange])
 
   // Build display stages with "Start" node prepended
   const displayStages = useMemo((): DisplayStage[] => {
