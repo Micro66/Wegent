@@ -601,12 +601,7 @@ async def _handle_assistant_message(
                 # This ensures text content is sent before tool events
                 await emitter.flush()
 
-                # Convert tool input to JSON string for arguments
-                arguments = (
-                    json.dumps(block.input, ensure_ascii=False)
-                    if isinstance(block.input, (dict, list))
-                    else str(block.input) if block.input else "{}"
-                )
+                arguments = block.input if isinstance(block.input, dict) else {}
                 await emitter.tool_start(
                     call_id=block.id,
                     name=block.name,

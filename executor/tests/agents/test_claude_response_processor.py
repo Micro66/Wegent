@@ -71,5 +71,34 @@ async def test_assistant_message_emits_tool_start_when_text_was_streamed():
     emitter.tool_start.assert_awaited_once_with(
         call_id="Bash_2",
         name="Bash",
-        arguments='{"command": "git status"}',
+        arguments={"command": "git status"},
+    )
+
+
+@pytest.mark.asyncio
+async def test_assistant_message_emits_empty_tool_input_as_dict():
+    emitter = MagicMock()
+    emitter.flush = AsyncMock()
+    emitter.text_delta = AsyncMock()
+    emitter.tool_start = AsyncMock()
+
+    msg = AssistantMessage(
+        content=[
+            ToolUseBlock(id="tool_write", name="Write", input={}),
+        ],
+        model="claude-test",
+    )
+
+    await _handle_assistant_message(
+        msg,
+        emitter,
+        DummyStateManager(),
+        thinking_manager=None,
+        stream_event_sent=False,
+    )
+
+    emitter.tool_start.assert_awaited_once_with(
+        call_id="tool_write",
+        name="Write",
+        arguments={},
     )
