@@ -476,14 +476,15 @@ const SingleMcpServerEditModal: React.FC<SingleMcpServerEditModalProps> = ({
           {showTools && testResult && testResult.tools.length > 0 && (
             <div className="border border-border rounded-md mt-2 max-h-40 overflow-y-auto">
               {testResult.tools.map(tool => (
-                <div
-                  key={tool.name}
-                  className="flex items-start gap-3 px-3 py-2 border-b border-border last:border-b-0"
-                >
-                  <span className="font-mono text-xs font-medium text-primary shrink-0">
+                <div key={tool.name} className="px-3 py-2 border-b border-border last:border-b-0">
+                  <div className="font-mono text-xs font-medium text-primary truncate">
                     {tool.name}
-                  </span>
-                  <span className="text-xs text-text-muted">{tool.description}</span>
+                  </div>
+                  {tool.description && (
+                    <div className="text-xs text-text-muted mt-0.5 line-clamp-2">
+                      {tool.description}
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
