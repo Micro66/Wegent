@@ -10,13 +10,25 @@ export const ClientEvents = {
 // Server -> Client Events
 export const ServerEvents = {
   AUTH_ERROR: 'auth:error',
+  TASK_CREATED: 'task:created',
   CHAT_START: 'chat:start',
   CHAT_CHUNK: 'chat:chunk',
   CHAT_DONE: 'chat:done',
   CHAT_ERROR: 'chat:error',
   CHAT_CANCELLED: 'chat:cancelled',
+  CHAT_BLOCK_CREATED: 'chat:block_created',
+  CHAT_BLOCK_UPDATED: 'chat:block_updated',
   CHAT_MESSAGE: 'chat:message',
 } as const
+
+export interface TaskCreatedPayload {
+  task_id: number
+  title: string
+  team_id: number
+  team_name: string
+  created_at: string
+  is_group_chat?: boolean
+}
 
 export interface ChatSendPayload {
   task_id?: number
@@ -49,8 +61,14 @@ export interface ChatChunkPayload {
   content: string
   offset: number
   task_id?: number
+  block_id?: string
+  block_offset?: number
   result?: {
     value?: string
+    reasoning_chunk?: string
+    reasoning_content?: string
+    thinking?: unknown[]
+    blocks?: import('@/types/api').MessageBlock[]
   }
 }
 
@@ -60,6 +78,9 @@ export interface ChatDonePayload {
   offset: number
   result: Record<string, unknown> & {
     value?: string
+    reasoning_content?: string
+    thinking?: unknown[]
+    blocks?: import('@/types/api').MessageBlock[]
   }
   message_id?: number
 }
@@ -75,6 +96,23 @@ export interface ChatErrorPayload {
 export interface ChatCancelledPayload {
   task_id: number
   subtask_id: number
+}
+
+export interface ChatBlockCreatedPayload {
+  task_id: number
+  subtask_id: number
+  block: import('@/types/api').MessageBlock
+}
+
+export interface ChatBlockUpdatedPayload {
+  task_id: number
+  subtask_id: number
+  block_id: string
+  content?: string
+  tool_output?: unknown
+  tool_input?: Record<string, unknown>
+  argument_status?: 'streaming' | 'done'
+  status?: import('@/types/api').MessageBlock['status'] | 'running'
 }
 
 export interface ChatMessagePayload {

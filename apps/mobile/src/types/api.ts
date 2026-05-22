@@ -14,8 +14,32 @@ export interface Team {
   namespace: string
   description?: string
   avatar?: string
+  agent_type?: string
+  is_mix_team?: boolean
+  bots?: TeamBot[]
   created_at: string
   updated_at: string
+}
+
+export interface AllowedModelRef {
+  name: string
+  type?: string
+  namespace?: string
+}
+
+export interface BotSummary {
+  agent_config?: Record<string, unknown> & {
+    bind_model?: unknown
+    allowed_models?: unknown
+  }
+  shell_type?: string
+}
+
+export interface TeamBot {
+  bot_id: number
+  bot_prompt?: string
+  role?: string
+  bot?: BotSummary
 }
 
 export interface TeamListResponse {
@@ -24,7 +48,7 @@ export interface TeamListResponse {
 }
 
 // ---- Task / Conversation ----
-export type TaskStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'
+export type TaskStatus = 'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'CANCELLED'
 
 export interface Task {
   id: number
@@ -44,21 +68,45 @@ export interface TaskListResponse {
 export interface TaskDetail extends Task {
   team_id: number
   team_name: string
+  team?: Team
+  model_id?: string | null
   subtasks?: SubTask[]
 }
 
 // ---- SubTask / Message ----
 export interface SubTask {
-  subtask_id: number
+  id: number
   task_id: number
-  message_id: number
   role: 'USER' | 'ASSISTANT'
-  content: string
+  prompt?: string
   status: string
+  message_id?: number
   bot_name?: string
   sender_user_id?: number
   sender_user_name?: string
   created_at: string
+  result?: {
+    value?: string
+    thinking?: unknown[]
+    reasoning_content?: string
+    blocks?: MessageBlock[]
+  }
+}
+
+export interface MessageBlock {
+  id?: string
+  type?: string
+  status?: string
+  content?: string
+  timestamp?: number
+  tool_use_id?: string
+  tool_name?: string
+  display_name?: string
+  tool_input?: Record<string, unknown>
+  tool_output?: unknown
+  argument_status?: 'streaming' | 'done'
+  image_urls?: string[]
+  video_url?: string
 }
 
 export interface SubTaskListResponse {
@@ -69,14 +117,18 @@ export interface SubTaskListResponse {
 // ---- Model ----
 export interface UnifiedModel {
   name: string
-  model_type?: string
+  type?: string
+  displayName?: string
   provider?: string
-  description?: string
-  shell_type?: string
+  modelId?: string
+  namespace?: string
+  modelCategoryType?: string
+  isAdvanced?: boolean
+  config?: Record<string, unknown>
 }
 
 export interface UnifiedModelListResponse {
-  items: UnifiedModel[]
+  data: UnifiedModel[]
 }
 
 // ---- Pagination ----

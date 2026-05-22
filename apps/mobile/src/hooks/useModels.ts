@@ -8,7 +8,7 @@ export function useModels(shellType: string = 'Chat') {
 
   useEffect(() => {
     apiFetch<UnifiedModelListResponse>(`/models/unified?shell_type=${shellType}`)
-      .then(res => setModels(res.items))
+      .then(res => setModels((res.data ?? []).filter(m => m.modelCategoryType === 'llm')))
       .catch(console.error)
       .finally(() => setLoading(false))
   }, [shellType])
