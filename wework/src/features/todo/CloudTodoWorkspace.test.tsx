@@ -1158,7 +1158,7 @@ describe('CloudTodoWorkspace', () => {
     expect(screen.getByText('0 个 Issue')).toBeInTheDocument()
   })
 
-  it('clears the previous project items and shows a skeleton while switching projects', async () => {
+  it('restores a cached project immediately while refreshing it in the background', async () => {
     const otherProject = {
       ...project,
       id: 12,
@@ -1204,14 +1204,15 @@ describe('CloudTodoWorkspace', () => {
     expect(screen.queryByTestId('cloud-todo-board-loading')).not.toBeInTheDocument()
 
     await userEvent.click(screen.getAllByText('Other Project')[0])
-
-    // The previous project's cards disappear immediately and the skeleton
-    // stays until the new project's items resolve.
     expect(screen.queryByTestId('cloud-todo-card-WEG-1')).not.toBeInTheDocument()
     expect(screen.getByTestId('cloud-todo-board-loading')).toBeInTheDocument()
 
     resolveBoardFetch?.()
     expect(await screen.findByTestId('cloud-todo-card-OTHER-1')).toBeInTheDocument()
+    expect(screen.queryByTestId('cloud-todo-board-loading')).not.toBeInTheDocument()
+
+    await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
+    expect(screen.getByTestId('cloud-todo-card-WEG-1')).toBeInTheDocument()
     expect(screen.queryByTestId('cloud-todo-board-loading')).not.toBeInTheDocument()
   })
 

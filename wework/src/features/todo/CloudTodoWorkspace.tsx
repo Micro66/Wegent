@@ -91,6 +91,7 @@ import { IssueComposer } from './IssueComposer'
 import { emptyTaskSearchFilters, type TaskSearchFilters } from './taskSearch'
 import { boardStatusColorClasses, columnDotClasses, columns, reorderLaneItems } from './todoShared'
 import { AiChatModal } from './AiChatModal'
+import { readBoardSnapshot, writeBoardSnapshot } from './boardSnapshotCache'
 import { shouldPrepareWorkItemTask, workItemTaskInput } from './workItemTaskInput'
 
 type ProjectView = 'board' | 'table' | 'files' | 'automation' | 'manage'
@@ -1060,6 +1061,35 @@ export function CloudTodoWorkspace({
       sourceItems.map(item => ({ ...item, project_store: projectStore })),
     []
   )
+  const restoreCachedBoard = useCallback(
+    (project: LocatedCloudProject) => {
+      const key = projectSpaceKey(projectSpaceRef(project))
+      const cachedItems = readBoardSnapshot(key)
+      if (!cachedItems) return
+      const locatedItems = locateItems(cachedItems, project.project_store)
+      boardSnapshotSignatureRef.current = boardSnapshotKey(cachedItems, null)
+      applyBoardItems(key, locatedItems, null)
+      setProjectItems(current => ({ ...current, [key]: locatedItems }))
+      setProjectCounts(current => ({ ...current, [key]: cachedItems.length }))
+    },
+    [applyBoardItems, locateItems]
+  )
+  useLayoutEffect(() => {
+    if (!selectedProject) return
+    let active = true
+    queueMicrotask(() => {
+      if (active) restoreCachedBoard(selectedProject)
+    })
+    return () => {
+      active = false
+    }
+  }, [restoreCachedBoard, selectedProject])
+
+  useEffect(() => {
+    if (!itemsProjectKey || boardError) return
+    writeBoardSnapshot(itemsProjectKey, items)
+  }, [boardError, items, itemsProjectKey])
+
   const updateMyWorkItem = useCallback(
     (updated: CloudLoopItem) => {
       const current = myWork.find(entry => entry.id === updated.id)
@@ -1388,6 +1418,7 @@ export function CloudTodoWorkspace({
 
   function applyProjectSelection(project: LocatedCloudProject | null) {
     const ref = project ? projectSpaceRef(project) : null
+    if (project) restoreCachedBoard(project)
     locallyRequestedProjectRef.current = ref
     setSelectedProjectRef(ref)
     resetProjectViewState()
@@ -1534,13 +1565,12 @@ export function CloudTodoWorkspace({
       .then(response => {
         if (!active) return
         setLocalProjectsError(null)
-        setLocalProjectSpaces(
-          response.items.map(project => ({
-            ...project,
-            project_store: 'local',
-            location: 'local',
-          }))
-        )
+        const locatedProjects = response.items.map(project => ({
+          ...project,
+          project_store: 'local' as const,
+          location: 'local' as const,
+        }))
+        setLocalProjectSpaces(locatedProjects)
       })
       .catch(error => {
         console.error('[Wework project spaces] local list failed', error)
@@ -1564,13 +1594,12 @@ export function CloudTodoWorkspace({
       .listCloudProjects()
       .then(response => {
         if (!active) return
-        setCloudProjectSpaces(
-          response.items.map(project => ({
-            ...project,
-            project_store: 'backend',
-            location: 'cloud',
-          }))
-        )
+        const locatedProjects = response.items.map(project => ({
+          ...project,
+          project_store: 'backend' as const,
+          location: 'cloud' as const,
+        }))
+        setCloudProjectSpaces(locatedProjects)
       })
       .catch(error => {
         console.warn('[Wework project spaces] cloud list failed', error)
@@ -1586,6 +1615,7 @@ export function CloudTodoWorkspace({
   useEffect(() => {
     if (!selectedProject || !selectedProjectId || !selectedProjectKey || !selectedProjectApi) return
     let active = true
+    const hasCachedSnapshot = readBoardSnapshot(selectedProjectKey) !== null
     const refreshItems = () => {
       const prepare =
         selectedProject?.task_provider === 'dingtalk_aitable' && services.aitableApi
@@ -1647,7 +1677,11 @@ export function CloudTodoWorkspace({
           const signature = boardSnapshotKey([], message)
           if (boardSnapshotSignatureRef.current === signature) return
           boardSnapshotSignatureRef.current = signature
-          applyBoardItems(selectedProjectKey, [], message)
+          if (hasCachedSnapshot) {
+            setBoardError(message)
+          } else {
+            applyBoardItems(selectedProjectKey, [], message)
+          }
         })
     }
     refreshItems()
