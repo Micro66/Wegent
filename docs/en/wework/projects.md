@@ -116,6 +116,14 @@ Automatic repair reuses the PR/MR monitoring state shown on the board and in the
 
 Automation rules can run on a schedule or be triggered by project events such as task creation and by webhooks. Rules can be enabled or disabled, run immediately, inspected through their run history, and cancelled while unfinished. Scheduling runs on the server, so the Wework client does not need to remain online.
 
+#### Triggering with a DingTalk robot
+
+A maintainer can change the event source to **DingTalk robot**, select a configured enterprise robot, save the rule, and choose **Start binding**. The binding window lasts 10 minutes, and the maintainer who started it must `@mention the robot` in the target group. After the robot adds a “Binding succeeded” text reaction, later mentions in that group create an unassigned issue in the board's first column and trigger only this rule.
+
+A trigger can describe the problem directly or quote text, an image, or rich text and add a note. Every image is stored as a project attachment before issue creation; if any image cannot be processed, no issue is created. The sender must map to a Wegent user with the project's Developer role.
+
+The robot reports outcomes with text reactions: success adds “Received”, while binding or validation failures add a specific reason without sending a quoted reply. Duplicate callbacks do not create another issue or automation run. During rebinding, the old group remains active until the new group binds successfully; maintainers can also cancel a pending binding or unbind the current group.
+
 Each rule selects one assignment strategy:
 
 - **Manual selection** fixes one project robot. When the rule fires, the original board task is assigned directly to that robot through the same execution flow used by an ordinary human assignment.
