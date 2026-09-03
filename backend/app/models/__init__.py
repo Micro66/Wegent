@@ -46,6 +46,14 @@ from app.models.plugin_marketplace import (
     PluginSubmission,
     PluginUpstream,
 )
+from app.models.plugin_publication import (
+    PluginPublicationCheck,
+    PluginPublicationEvent,
+    PluginPublicationIdempotency,
+    PluginPublicationRequest,
+    PluginPublicationRevision,
+    PluginReleaseIdempotency,
+)
 from app.models.project import Project
 from app.models.project_chat_message import ProjectChatMessage
 from app.models.resource_member import MemberStatus, ResourceMember, ResourceRole
@@ -86,6 +94,7 @@ __all__ = [
     "CloudProject",
     "CloudProjectFile",
     "LoopItemTaskBinding",
+    "LoopItemExecution",
     "LoopItem",
     "LoopItemAttachment",
     "LoopItemCollaborator",
@@ -120,6 +129,12 @@ __all__ = [
     "PluginUpstream",
     "PluginSubmission",
     "PluginDeviceInstallation",
+    "PluginPublicationRequest",
+    "PluginPublicationRevision",
+    "PluginPublicationCheck",
+    "PluginPublicationEvent",
+    "PluginPublicationIdempotency",
+    "PluginReleaseIdempotency",
     "SmartApp",
     "SmartAppRelease",
     "SmartAppSubmission",
