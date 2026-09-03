@@ -21,6 +21,9 @@ interface ProjectAutomationRuleBase {
   triggerType: 'schedule' | 'event' | 'workflow'
   eventType: 'task.created' | 'task.status_changed' | null
   eventConfig: Record<string, unknown>
+  eventSource?: 'issue' | 'dingtalk'
+  dingtalkChannelId?: number | null
+  dingtalkBinding?: ProjectAutomationDingTalkBinding | null
   webhookEventId: string | null
   webhookSecret: string | null
   cronExpression: string | null
@@ -75,6 +78,8 @@ interface ProjectAutomationInputBase {
   triggerType: 'schedule' | 'event' | 'workflow'
   eventType: 'task.created' | 'task.status_changed' | null
   eventConfig: Record<string, unknown>
+  eventSource: 'issue' | 'dingtalk'
+  dingtalkChannelId: number | null
   cronExpression: string | null
   timezone: string
   enabled: boolean
@@ -82,6 +87,27 @@ interface ProjectAutomationInputBase {
   runtimeSource?: 'agent_default' | 'fixed_profile' | 'issue_creator' | 'runtime_user'
   runtimeProfileId?: string | null
   runtimeUserId?: number | null
+}
+
+export interface ProjectAutomationDingTalkBinding {
+  status: 'unbound' | 'pairing' | 'bound'
+  conversationTitle: string | null
+  boundAt: string | null
+  expiresAt: string | null
+}
+
+export interface AutomationDingTalkChannel {
+  id: number
+  name: string
+  channelType: string
+  isBound: boolean
+}
+
+interface AutomationDingTalkChannelResponse {
+  id: number
+  name: string
+  channel_type: string
+  is_bound: boolean
 }
 
 export interface ProjectAutomationInput extends ProjectAutomationInputBase {
@@ -178,6 +204,38 @@ export function createProjectAutomationApi(client: HttpClient) {
     },
     list(projectId: string) {
       return client.get<ProjectAutomationRule[]>(`/v1/cloud-projects/${projectId}/automations`)
+    },
+    async listDingTalkChannels() {
+      const channels = await client.get<AutomationDingTalkChannelResponse[]>(
+        '/users/me/available-channels'
+      )
+      return channels.map(channel => ({
+        id: channel.id,
+        name: channel.name,
+        channelType: channel.channel_type,
+        isBound: channel.is_bound,
+      }))
+    },
+    getDingTalkBinding(projectId: string, automationId: string) {
+      return client.get<ProjectAutomationDingTalkBinding>(
+        `/v1/cloud-projects/${projectId}/automations/${automationId}/dingtalk-binding`
+      )
+    },
+    beginDingTalkBinding(projectId: string, automationId: string, version: number) {
+      return client.post<ProjectAutomationDingTalkBinding>(
+        `/v1/cloud-projects/${projectId}/automations/${automationId}/dingtalk-binding/pair`,
+        { version }
+      )
+    },
+    cancelDingTalkBinding(projectId: string, automationId: string) {
+      return client.delete<ProjectAutomationDingTalkBinding>(
+        `/v1/cloud-projects/${projectId}/automations/${automationId}/dingtalk-binding/pair`
+      )
+    },
+    removeDingTalkBinding(projectId: string, automationId: string) {
+      return client.delete<ProjectAutomationDingTalkBinding>(
+        `/v1/cloud-projects/${projectId}/automations/${automationId}/dingtalk-binding`
+      )
     },
     create(projectId: string, input: ProjectAutomationInput) {
       return client.post<ProjectAutomationRule>(

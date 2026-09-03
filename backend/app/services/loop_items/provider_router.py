@@ -33,6 +33,7 @@ class LoopItemProviderRouter:
         automation_context: dict[str, Any] | None = None,
         instruction: str | None = None,
         assign_creator_if_unassigned: bool = True,
+        commit: bool = True,
     ) -> RoutedLoopItem:
         if project.task_provider in {"github", "gitlab"}:
             if automation_context is None and instruction is None:
@@ -64,6 +65,7 @@ class LoopItemProviderRouter:
             automation_context=automation_context,
             instruction=instruction,
             assign_creator_if_unassigned=assign_creator_if_unassigned,
+            commit=commit,
         )
         response = loop_item_service.response_values(db, item, user.id)
         return RoutedLoopItem(values=response, internal_item=item)
@@ -75,7 +77,23 @@ loop_item_provider_router = LoopItemProviderRouter()
 class LoopItemAttachmentProviderRouter:
     def list(self, db: Session, item_id: str, user_id: int) -> list[object]:
         if external_loop_item_provider.is_external_item(db, item_id):
-            return external_loop_item_provider.list_attachments(db, item_id, user_id)
+            shadow = db.get(LoopItem, item_id)
+            local = (
+                loop_item_service.list_attachments(db, item_id, user_id)
+                if shadow is not None
+                else []
+            )
+            project = (
+                db.get(CloudProject, shadow.cloud_project_id)
+                if shadow is not None
+                else None
+            )
+            external = (
+                external_loop_item_provider.list_attachments(db, item_id, user_id)
+                if project is not None and project.task_provider == "gitlab"
+                else []
+            )
+            return [*local, *external]
         return loop_item_service.list_attachments(db, item_id, user_id)
 
     def add(

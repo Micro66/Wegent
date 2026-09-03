@@ -172,6 +172,9 @@ const RULE = {
   triggerType: 'schedule',
   eventType: null,
   eventConfig: {},
+  eventSource: 'issue',
+  dingtalkChannelId: null,
+  dingtalkBinding: null,
   assignmentMode: 'manual',
   managerType: null,
   webhookEventId: null,
@@ -345,6 +348,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
   let localDefaultAgent = null
   let wegentAgent = null
   let cloudTeam = null
+  let dingtalkE2EChannel = null
   let personalApiKey = null
   let managerToolCalls = 0
   const upstreamResponseRequests = []
@@ -556,6 +560,21 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
     assert.equal(localDefaultAgent.executionDeviceId, localDefaultDevice.device_id)
     assert.equal(localDefaultAgent.model, DEFAULT_MODEL_ID)
     assert.equal(localDefaultAgent.modelType, 'runtime')
+    const dingtalkRule = await cloudRequest(`/api/v1/cloud-projects/${projectId}/automations`, {
+      method: 'POST',
+      body: JSON.stringify({
+        name: '钉钉群反馈自动处理',
+        prompt: '读取钉钉反馈创建的 Issue，并完成分析。',
+        triggerType: 'event',
+        eventType: 'task.created',
+        eventSource: 'dingtalk',
+        dingtalkChannelId: dingtalkE2EChannel.id,
+        eventConfig: {},
+        assignmentMode: 'manual',
+        agentId: cloudAgent.id,
+        enabled: true,
+      }),
+    })
     await control.command('waitFor', '[data-testid="workspace-tab-add"]', {
       timeoutMs: uiTimeoutMs,
     })
@@ -1245,6 +1264,52 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       visible: true,
     })
     await captureScreenshot(control, 'project-automation-unified-home.png')
+    const dingtalkRuleCard = `${activeBoard} [data-testid="automation-card-${dingtalkRule.id}"]`
+    await control.command('waitFor', dingtalkRuleCard, {
+      text: '钉钉群反馈自动处理',
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
+    await control.command('click', dingtalkRuleCard, { visible: true })
+    await control.command('waitFor', '[data-testid="automation-dingtalk-channel"]', {
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
+    assert.equal(
+      await control.command('getValue', '[data-testid="automation-dingtalk-channel"]'),
+      String(dingtalkE2EChannel.id),
+      'The persisted DingTalk robot was not selected'
+    )
+    await control.command('fill', '[data-testid="automation-dingtalk-channel-search"]', {
+      value: 'CI 绑定机器人',
+      visible: true,
+    })
+    await control.command('scrollIntoView', '[data-testid="automation-dingtalk-bind"]')
+    await control.command('clickWhenEnabled', '[data-testid="automation-dingtalk-bind"]', {
+      timeoutMs: uiTimeoutMs,
+    })
+    await control.command('waitFor', '[data-testid="automation-dingtalk-binding-status"]', {
+      text: '等待群内绑定',
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
+    const pairing = await cloudRequest(
+      `/api/v1/cloud-projects/${projectId}/automations/${dingtalkRule.id}/dingtalk-binding`
+    )
+    assert.equal(pairing.status, 'pairing')
+    await control.command('click', '[data-testid="automation-dingtalk-cancel-bind"]', {
+      visible: true,
+    })
+    await control.command('waitFor', '[data-testid="automation-dingtalk-binding-status"]', {
+      text: '尚未绑定群',
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
+    await captureScreenshot(control, 'project-automation-dingtalk-binding.png')
+    await control.command('click', '[data-testid="automation-editor-back"]', { visible: true })
+    await cloudRequest(`/api/admin/im-channels/${dingtalkE2EChannel.id}`, {
+      method: 'DELETE',
+    })
 
     const workflowProject = await cloudRequest(`/api/v1/cloud-projects/${projectId}`)
     await cloudRequest(`/api/v1/cloud-projects/${projectId}`, {
@@ -2088,6 +2153,17 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         }),
       })
       assert.ok(cloudProject?.id, 'Real cloud project fixture did not return an id')
+      dingtalkE2EChannel = await requestJson(backendUrl, authToken, '/api/admin/im-channels', {
+        method: 'POST',
+        body: JSON.stringify({
+          name: `CI 绑定机器人 ${process.pid}`,
+          namespace: 'default',
+          channel_type: 'dingtalk',
+          config: {},
+          is_enabled: true,
+        }),
+      })
+      assert.ok(dingtalkE2EChannel?.id, 'DingTalk robot fixture did not return an id')
       const bot = await requestJson(backendUrl, authToken, '/api/bots', {
         method: 'POST',
         body: JSON.stringify({

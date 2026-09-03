@@ -1486,7 +1486,9 @@ class ProjectAutomationProcessor:
             return self._run_factory(db, rule, trigger, scheduled_for)
         from app.services.project_automations import project_automation_service
 
-        return project_automation_service._create_run(db, rule, trigger, scheduled_for)
+        return project_automation_service._create_run(
+            db, rule, trigger, scheduled_for, commit=False
+        )
 
     def matching_rules(
         self,
@@ -1546,6 +1548,10 @@ class ProjectAutomationProcessor:
             if rule_metadata.get("trigger_type") != "event":
                 continue
             if rule_metadata.get("event_type") != event.event_type:
+                continue
+            expected_source = str(rule_metadata.get("event_source") or "issue")
+            actual_source = "dingtalk" if event.source == "dingtalk" else "issue"
+            if expected_source != actual_source:
                 continue
             if self._matches(rule_metadata.get("event_config"), event, project):
                 matches.append(rule)
@@ -1743,7 +1749,32 @@ class ProjectAutomationProcessor:
         dispatched = 0
         for rule in matching_rules:
             run_event_payload = self._event_payload_for_rule(db, event, rule)
+            incoming_event_id = str(run_event_payload.get("incoming_event_id") or "")
+            run_public_id = (
+                str(
+                    uuid.uuid5(
+                        uuid.NAMESPACE_URL,
+                        "wegent:project-automation:event-run:"
+                        f"{rule.id}:{incoming_event_id}",
+                    )
+                )
+                if incoming_event_id
+                else None
+            )
+            existing_run = (
+                db.query(ProjectAutomationRun)
+                .filter(ProjectAutomationRun.public_id == run_public_id)
+                .one_or_none()
+                if run_public_id
+                else None
+            )
+            if existing_run is not None:
+                if existing_run.status == "pending":
+                    await project_automation_execution.dispatch(db, rule, existing_run)
+                dispatched += 1
+                continue
             run = self._create_run(db, rule, "event", utcnow())
+            run.public_id = run_public_id
             run.task_id = event.subject_id
             event_title = event.payload.get("title")
             run.task_title = str(event_title) if event_title else ""
@@ -1782,9 +1813,6 @@ class ProjectAutomationProcessor:
     ) -> bool:
         if not isinstance(config, dict):
             return True
-        sources = config.get("sources")
-        if isinstance(sources, list) and sources and event.source not in sources:
-            return False
         if event.event_type == "task.status_changed":
             if config.get("transition") != "entered_processing":
                 return False

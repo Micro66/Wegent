@@ -200,6 +200,25 @@ function renderView({
   const projectAutomationApi = {
     list: vi.fn().mockResolvedValue(listedRules),
     listRuns: vi.fn().mockResolvedValue(listedRuns),
+    listDingTalkChannels: vi
+      .fn()
+      .mockResolvedValue([
+        { id: 19, name: 'Feedback bot', channelType: 'dingtalk', isBound: false },
+      ]),
+    getDingTalkBinding: vi.fn().mockResolvedValue({
+      status: 'bound',
+      conversationTitle: 'Feedback group',
+      boundAt: '2026-09-03T10:00:00Z',
+      expiresAt: null,
+    }),
+    beginDingTalkBinding: vi.fn().mockResolvedValue({
+      status: 'pairing',
+      conversationTitle: null,
+      boundAt: null,
+      expiresAt: '2026-09-03T10:10:00Z',
+    }),
+    cancelDingTalkBinding: vi.fn(),
+    removeDingTalkBinding: vi.fn(),
     create: vi.fn(),
     migrateWorkflow: vi.fn().mockImplementation((_projectId, input) =>
       Promise.resolve({
@@ -1215,5 +1234,69 @@ describe('ProjectAutomationView', () => {
     await waitFor(() => expect(projectAutomationApi.listRuns).toHaveBeenCalledTimes(1))
     expect(projectAutomationApi.listRuns).toHaveBeenCalledTimes(1)
     expect(projectAutomationApi.listRuns).toHaveBeenCalledWith('21', 'root-rule')
+  })
+
+  test('shows DingTalk robot binding state and starts pairing', async () => {
+    const dingtalkRule: ProjectAutomationRule = {
+      ...rule,
+      id: 'dingtalk-rule',
+      eventSource: 'dingtalk',
+      dingtalkChannelId: 19,
+      dingtalkBinding: {
+        status: 'bound',
+        conversationTitle: 'Feedback group',
+        boundAt: '2026-09-03T10:00:00Z',
+        expiresAt: null,
+      },
+    }
+    const { projectAutomationApi } = renderView({ listedRules: [dingtalkRule] })
+    vi.mocked(projectAutomationApi.update).mockResolvedValue({
+      ...dingtalkRule,
+      version: 3,
+    })
+
+    await openRuleEditor('dingtalk-rule')
+
+    expect(screen.getByTestId('automation-dingtalk-channel')).toHaveValue('19')
+    expect(screen.getByTestId('automation-dingtalk-channel-search')).toBeInTheDocument()
+    expect(screen.getByTestId('automation-dingtalk-binding-status')).toHaveTextContent(
+      'Feedback group'
+    )
+    fireEvent.click(screen.getByTestId('automation-dingtalk-bind'))
+    await waitFor(() =>
+      expect(projectAutomationApi.beginDingTalkBinding).toHaveBeenCalledWith(
+        '11',
+        'dingtalk-rule',
+        3
+      )
+    )
+    expect(screen.getByTestId('automation-dingtalk-binding-status')).toHaveTextContent(
+      '等待群内绑定'
+    )
+  })
+
+  test('keeps the DingTalk binding error beside the affected controls', async () => {
+    const dingtalkRule: ProjectAutomationRule = {
+      ...rule,
+      id: 'dingtalk-error-rule',
+      eventSource: 'dingtalk',
+      dingtalkChannelId: 19,
+      dingtalkBinding: null,
+    }
+    const { projectAutomationApi } = renderView({ listedRules: [dingtalkRule] })
+    vi.mocked(projectAutomationApi.update).mockResolvedValue({
+      ...dingtalkRule,
+      version: 3,
+    })
+    vi.mocked(projectAutomationApi.beginDingTalkBinding).mockRejectedValue(
+      new Error('Group is already bound')
+    )
+
+    await openRuleEditor('dingtalk-error-rule')
+    fireEvent.click(screen.getByTestId('automation-dingtalk-bind'))
+
+    expect(await screen.findByTestId('automation-dingtalk-binding-error')).toHaveTextContent(
+      'Group is already bound'
+    )
   })
 })

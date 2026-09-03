@@ -110,6 +110,7 @@ dependencies = [
     "python-socketio>=5.10.0",
     # DingTalk Stream SDK for IM channel integration
     "dingtalk-stream>=0.24.0",
+    "alibabacloud-dingtalk>=2.2.57,<3.0.0",
     # Telegram Bot SDK for IM channel integration
     "python-telegram-bot>=21.0",
     # Discord Bot SDK for IM channel integration

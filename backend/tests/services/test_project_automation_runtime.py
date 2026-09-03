@@ -104,6 +104,47 @@ async def test_event_processing_wakes_cloud_executor_after_dispatch(monkeypatch)
     wake.assert_awaited_once_with()
 
 
+def test_dingtalk_event_matches_only_dingtalk_source_rule() -> None:
+    issue_rule = SimpleNamespace(
+        id="issue-rule",
+        status="enabled",
+        metadata_json={
+            "trigger_type": "event",
+            "event_type": "task.created",
+            "event_source": "issue",
+        },
+    )
+    dingtalk_rule = SimpleNamespace(
+        id="dingtalk-rule",
+        status="enabled",
+        metadata_json={
+            "trigger_type": "event",
+            "event_type": "task.created",
+            "event_source": "dingtalk",
+        },
+    )
+    query = MagicMock()
+    query.filter.return_value = query
+    query.all.return_value = [issue_rule, dingtalk_rule]
+    db = MagicMock()
+    db.query.return_value = query
+    db.get.return_value = SimpleNamespace(metadata_json={})
+
+    matches = ProjectAutomationProcessor().matching_rules(
+        db,
+        ProjectAutomationEvent(
+            event_type="task.created",
+            project_id="project-1",
+            subject_id="task-1",
+            source="dingtalk",
+            actor_user_id=7,
+            payload={"title": "From DingTalk"},
+        ),
+    )
+
+    assert matches == [dingtalk_rule]
+
+
 @pytest.mark.asyncio
 async def test_status_event_dispatches_only_when_processing_boundary_is_crossed(
     monkeypatch,

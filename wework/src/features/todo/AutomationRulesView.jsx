@@ -31,6 +31,8 @@ import {
   Zap,
 } from 'lucide-react'
 import { PopupMenu } from '@/components/common/MenuSelect'
+import { useTranslation } from '@/hooks/useTranslation'
+import i18n from '@/i18n'
 import { AutomationWorkflowCanvas } from './AutomationWorkflowCanvas.jsx'
 import { automationClass } from './automationStyles'
 
@@ -277,6 +279,8 @@ const automationTemplates = [
     trigger: {
       type: 'event',
       source: 'issue',
+      dingtalkChannelId: null,
+      dingtalkBinding: null,
       startMode: 'immediate',
       event: 'created',
       tags: ['自动开发'],
@@ -474,6 +478,24 @@ function triggerPresentation(trigger) {
     }
   }
 
+  if (trigger.source === 'dingtalk') {
+    return {
+      label: i18n.t(
+        'cloud_project.project_automation_dingtalk_trigger_label',
+        '钉钉机器人收到 @消息时'
+      ),
+      detail: trigger.dingtalkBinding?.conversationTitle
+        ? i18n.t('cloud_project.project_automation_dingtalk_bound_group', {
+            defaultValue: '已绑定群：{{group}}',
+            group: trigger.dingtalkBinding.conversationTitle,
+          })
+        : i18n.t(
+            'cloud_project.project_automation_dingtalk_bind_after_save',
+            '保存后绑定目标钉钉群'
+          ),
+    }
+  }
+
   if (trigger.startMode === 'status') {
     return {
       label: 'Issue 开始处理时',
@@ -603,6 +625,10 @@ export function AutomationRulesView({
   onToggleRule,
   onDuplicateRule,
   onDeleteRule,
+  dingtalkChannels = [],
+  onBeginDingTalkBinding,
+  onCancelDingTalkBinding,
+  onRemoveDingTalkBinding,
 }) {
   const [view, setView] = useState('home')
   const [homeTab, setHomeTab] = useState('rules')
@@ -981,6 +1007,10 @@ export function AutomationRulesView({
           saving={saving}
           projectTags={projectTags}
           executionCatalog={executionCatalog}
+          dingtalkChannels={dingtalkChannels}
+          onBeginDingTalkBinding={onBeginDingTalkBinding}
+          onCancelDingTalkBinding={onCancelDingTalkBinding}
+          onRemoveDingTalkBinding={onRemoveDingTalkBinding}
           onBack={() => setView('home')}
           onEditorSectionChange={changeEditorSection}
           onSelectNode={setSelectedNode}
@@ -1441,7 +1471,8 @@ function TemplateIcon({ type }) {
 function AutomationCard({ rule, canManage, onOpen, onToggle, onDuplicate, onDelete }) {
   const [menuOpen, setMenuOpen] = useState(false)
   const trigger = triggerPresentation(rule.trigger)
-  const TriggerIcon = rule.trigger.type === 'schedule' ? Clock3 : Webhook
+  const TriggerIcon =
+    rule.trigger.type === 'schedule' ? Clock3 : rule.trigger.source === 'dingtalk' ? Bot : Webhook
 
   return (
     <article
@@ -1525,6 +1556,10 @@ function WorkflowEditor({
   saving,
   projectTags,
   executionCatalog,
+  dingtalkChannels,
+  onBeginDingTalkBinding,
+  onCancelDingTalkBinding,
+  onRemoveDingTalkBinding,
   onBack,
   onSelectNode,
   onPanelTabChange,
@@ -1539,7 +1574,8 @@ function WorkflowEditor({
   const [selectedRunId, setSelectedRunId] = useState(runs[0]?.id ?? null)
   const needsSave = dirty || !draft.persisted
   const trigger = triggerPresentation(draft.trigger)
-  const TriggerIcon = draft.trigger.type === 'schedule' ? Clock3 : Webhook
+  const TriggerIcon =
+    draft.trigger.type === 'schedule' ? Clock3 : draft.trigger.source === 'dingtalk' ? Bot : Webhook
   const visibleRuns = runs.filter(run => runMatchesFilter(run.status, runStatus))
   const selectedRun = visibleRuns.find(run => run.id === selectedRunId) ?? visibleRuns[0] ?? null
   const latestRun = runs[0] ?? null
@@ -2045,6 +2081,10 @@ function WorkflowEditor({
                         projectTags={projectTags}
                         onChange={updateTrigger}
                         onRuleChange={updateRule}
+                        dingtalkChannels={dingtalkChannels}
+                        onBeginDingTalkBinding={onBeginDingTalkBinding}
+                        onCancelDingTalkBinding={onCancelDingTalkBinding}
+                        onRemoveDingTalkBinding={onRemoveDingTalkBinding}
                       />
                     ) : selectedDagStage ? (
                       <>
@@ -2242,10 +2282,168 @@ function RunStatus({ status }) {
   )
 }
 
-function TriggerSettings({ draft, projectTags, onChange, onRuleChange }) {
+function DingTalkTriggerSettings({ draft, channels, onChange, onBegin, onCancel, onRemove }) {
+  const { t } = useTranslation('common')
+  const binding = draft.trigger.dingtalkBinding
+  const [now, setNow] = useState(Date.now())
+  const [query, setQuery] = useState('')
+  const [pendingAction, setPendingAction] = useState('')
+  const [actionError, setActionError] = useState('')
+
+  useEffect(() => {
+    if (binding?.status !== 'pairing' || !binding.expiresAt) return
+    const timer = window.setInterval(() => setNow(Date.now()), 1000)
+    return () => window.clearInterval(timer)
+  }, [binding?.expiresAt, binding?.status])
+
+  const remaining = binding?.expiresAt
+    ? Math.max(0, Math.ceil((new Date(binding.expiresAt).getTime() - now) / 1000))
+    : 0
+  const minutes = String(Math.floor(remaining / 60)).padStart(2, '0')
+  const seconds = String(remaining % 60).padStart(2, '0')
+
+  const visibleChannels = channels.filter(
+    channel =>
+      channel.id === draft.trigger.dingtalkChannelId ||
+      channel.name.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())
+  )
+
+  const apply = async (name, action) => {
+    if (!action || pendingAction) return
+    setPendingAction(name)
+    setActionError('')
+    try {
+      const next = await action(draft)
+      if (next) onChange('dingtalkBinding', next)
+    } catch (error) {
+      setActionError(
+        `${t('cloud_project.project_automation_dingtalk_action_failed', '绑定操作失败')}：${error instanceof Error ? error.message : String(error)}`
+      )
+    } finally {
+      setPendingAction('')
+    }
+  }
+
+  return (
+    <section className={automationClass('schedule-settings')}>
+      <label className={automationClass('panel-field')}>
+        <span>
+          <i className={automationClass('cascade-index')}>2</i>
+          {t('cloud_project.project_automation_dingtalk_robot', '钉钉机器人')}
+        </span>
+        <select
+          data-testid="automation-dingtalk-channel"
+          value={draft.trigger.dingtalkChannelId ?? ''}
+          onChange={event => {
+            setActionError('')
+            onChange('dingtalkChannelId', Number(event.target.value) || null)
+          }}
+        >
+          <option value="">
+            {t('cloud_project.project_automation_dingtalk_select', '选择机器人')}
+          </option>
+          {visibleChannels.map(channel => (
+            <option key={channel.id} value={channel.id}>
+              {channel.name}
+            </option>
+          ))}
+        </select>
+        <input
+          type="search"
+          data-testid="automation-dingtalk-channel-search"
+          value={query}
+          onChange={event => setQuery(event.target.value)}
+          placeholder={t('cloud_project.project_automation_dingtalk_search', '搜索机器人')}
+          aria-label={t('cloud_project.project_automation_dingtalk_search', '搜索机器人')}
+        />
+      </label>
+      <div className={automationClass('trigger-explanation')}>
+        <Bot size={15} />
+        <div>
+          <strong data-testid="automation-dingtalk-binding-status">
+            {binding?.status === 'pairing'
+              ? t('cloud_project.project_automation_dingtalk_pairing', '等待群内绑定')
+              : binding?.status === 'bound'
+                ? `${t('cloud_project.project_automation_dingtalk_bound', '已绑定')}：${binding.conversationTitle || t('cloud_project.project_automation_dingtalk_group', '钉钉群')}`
+                : t('cloud_project.project_automation_dingtalk_unbound', '尚未绑定群')}
+          </strong>
+          <p>
+            {binding?.status === 'pairing'
+              ? `${t('cloud_project.project_automation_dingtalk_pair_help', '请由当前维护者在目标群 @机器人')} · ${minutes}:${seconds}`
+              : t(
+                  'cloud_project.project_automation_dingtalk_help',
+                  '群成员 @机器人后，将创建 Issue 并启动此流程。'
+                )}
+          </p>
+        </div>
+      </div>
+      {draft.persisted ? (
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            className={automationClass('project-secondary-action')}
+            data-testid="automation-dingtalk-bind"
+            disabled={!draft.trigger.dingtalkChannelId || Boolean(pendingAction)}
+            onClick={() => apply('begin', onBegin)}
+          >
+            {binding?.status === 'bound'
+              ? t('cloud_project.project_automation_dingtalk_rebind', '重新绑定')
+              : t('cloud_project.project_automation_dingtalk_start_pair', '开始绑定')}
+          </button>
+          {binding?.status === 'pairing' ? (
+            <button
+              type="button"
+              className={automationClass('project-secondary-action')}
+              data-testid="automation-dingtalk-cancel-bind"
+              disabled={Boolean(pendingAction)}
+              onClick={() => apply('cancel', onCancel)}
+            >
+              {t('cloud_project.project_automation_dingtalk_cancel_pair', '取消绑定')}
+            </button>
+          ) : null}
+          {binding?.status === 'bound' ? (
+            <button
+              type="button"
+              className={automationClass('project-secondary-action')}
+              data-testid="automation-dingtalk-unbind"
+              disabled={Boolean(pendingAction)}
+              onClick={() => apply('remove', onRemove)}
+            >
+              {t('cloud_project.project_automation_dingtalk_remove', '解除绑定')}
+            </button>
+          ) : null}
+        </div>
+      ) : (
+        <p>
+          {t(
+            'cloud_project.project_automation_dingtalk_save_first',
+            '请先保存自动化，再绑定目标群。'
+          )}
+        </p>
+      )}
+      {actionError ? (
+        <p role="alert" data-testid="automation-dingtalk-binding-error">
+          {actionError}
+        </p>
+      ) : null}
+    </section>
+  )
+}
+
+function TriggerSettings({
+  draft,
+  projectTags,
+  onChange,
+  onRuleChange,
+  dingtalkChannels,
+  onBeginDingTalkBinding,
+  onCancelDingTalkBinding,
+  onRemoveDingTalkBinding,
+}) {
   const trigger = draft.trigger
   const presentation = triggerPresentation(trigger)
-  const TriggerIcon = trigger.type === 'schedule' ? Clock3 : Webhook
+  const TriggerIcon =
+    trigger.type === 'schedule' ? Clock3 : trigger.source === 'dingtalk' ? Bot : Webhook
   const startMode = trigger.startMode ?? 'immediate'
 
   const toggleTag = tag => {
@@ -2286,11 +2484,19 @@ function TriggerSettings({ draft, projectTags, onChange, onRuleChange }) {
         </span>
         <select
           data-testid="automation-trigger-type"
-          value={trigger.type}
-          onChange={event => onChange('type', event.target.value)}
+          value={trigger.type === 'schedule' ? 'schedule' : trigger.source}
+          onChange={event => {
+            const value = event.target.value
+            onChange('type', value === 'schedule' ? 'schedule' : 'event')
+            onChange('source', value === 'dingtalk' ? 'dingtalk' : 'issue')
+            if (value === 'dingtalk') onChange('startMode', 'immediate')
+          }}
         >
           <option value="schedule">按计划执行</option>
-          <option value="event">Issue 触发</option>
+          <option value="issue">Issue 触发</option>
+          <option value="dingtalk">
+            {i18n.t('cloud_project.project_automation_dingtalk_robot', '钉钉机器人')}
+          </option>
         </select>
       </label>
       {trigger.type === 'schedule' ? (
@@ -2361,6 +2567,15 @@ function TriggerSettings({ draft, projectTags, onChange, onRuleChange }) {
             </select>
           </label>
         </section>
+      ) : trigger.source === 'dingtalk' ? (
+        <DingTalkTriggerSettings
+          draft={draft}
+          channels={dingtalkChannels}
+          onChange={onChange}
+          onBegin={onBeginDingTalkBinding}
+          onCancel={onCancelDingTalkBinding}
+          onRemove={onRemoveDingTalkBinding}
+        />
       ) : (
         <>
           <section className={automationClass('start-mode-section')}>

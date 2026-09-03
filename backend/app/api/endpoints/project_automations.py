@@ -34,6 +34,8 @@ from app.schemas.delivery import LoopItemResponse
 from app.schemas.project_automation import (
     ProjectAutomationCreate,
     ProjectAutomationDeleteView,
+    ProjectAutomationDingTalkBindingView,
+    ProjectAutomationDingTalkPairRequest,
     ProjectAutomationManagerAssign,
     ProjectAutomationRunView,
     ProjectAutomationUpdate,
@@ -43,6 +45,9 @@ from app.schemas.project_automation import (
 )
 from app.services.cloud_projects.access import require_cloud_project_role
 from app.services.loop_items.external_provider import external_loop_item_provider
+from app.services.project_automation_dingtalk_binding import (
+    project_automation_dingtalk_binding_service,
+)
 from app.services.project_automation_execution import project_automation_execution
 from app.services.project_automations import (
     ProjectAutomationEvent,
@@ -76,6 +81,9 @@ async def trigger_automation_event(
         )
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Automation event not found")
     project_automation_service._rule(db, str(rule.cloud_project_id), webhook_event_id)
+    metadata = rule.metadata_json if isinstance(rule.metadata_json, dict) else {}
+    if metadata.get("event_source") != "issue":
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Automation event not found")
     project = db.get(CloudProject, rule.cloud_project_id)
     if project is None:
         logger.warning(
@@ -249,6 +257,67 @@ def create_automation(
     current_user: User = Depends(get_current_user),
 ) -> ProjectAutomationView:
     return project_automation_service.create(db, project_id, current_user.id, values)
+
+
+@router.get(
+    "/{project_id}/automations/{automation_id}/dingtalk-binding",
+    response_model=ProjectAutomationDingTalkBindingView,
+)
+def get_dingtalk_binding(
+    project_id: str,
+    automation_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> ProjectAutomationDingTalkBindingView:
+    return project_automation_dingtalk_binding_service.view(
+        db, project_id, automation_id, current_user.id
+    )
+
+
+@router.post(
+    "/{project_id}/automations/{automation_id}/dingtalk-binding/pair",
+    response_model=ProjectAutomationDingTalkBindingView,
+)
+async def begin_dingtalk_binding(
+    project_id: str,
+    automation_id: str,
+    values: ProjectAutomationDingTalkPairRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> ProjectAutomationDingTalkBindingView:
+    return await project_automation_dingtalk_binding_service.begin(
+        db, project_id, automation_id, current_user.id, values.version
+    )
+
+
+@router.delete(
+    "/{project_id}/automations/{automation_id}/dingtalk-binding/pair",
+    response_model=ProjectAutomationDingTalkBindingView,
+)
+async def cancel_dingtalk_binding(
+    project_id: str,
+    automation_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> ProjectAutomationDingTalkBindingView:
+    return await project_automation_dingtalk_binding_service.cancel(
+        db, project_id, automation_id, current_user.id
+    )
+
+
+@router.delete(
+    "/{project_id}/automations/{automation_id}/dingtalk-binding",
+    response_model=ProjectAutomationDingTalkBindingView,
+)
+async def remove_dingtalk_binding(
+    project_id: str,
+    automation_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> ProjectAutomationDingTalkBindingView:
+    return await project_automation_dingtalk_binding_service.unbind(
+        db, project_id, automation_id, current_user.id
+    )
 
 
 @router.patch(

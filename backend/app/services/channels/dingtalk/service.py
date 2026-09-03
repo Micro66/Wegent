@@ -19,6 +19,7 @@ import dingtalk_stream
 
 from app.services.channels.base import BaseChannelProvider
 from app.services.channels.dingtalk.handler import WegentChatbotHandler
+from app.services.channels.dingtalk.sender import DingTalkRobotSender
 from app.services.channels.messager_config import (
     get_channel_default_model_name,
     get_channel_default_team_id,
@@ -120,6 +121,7 @@ class DingTalkChannelProvider(BaseChannelProvider):
                     channel_id
                 ),
                 channel_id=channel_id,  # Pass channel_id for IM binding and callback purposes
+                robot_sender=DingTalkRobotSender(self.client_id, self.client_secret),
             )
             self._client.register_callback_handler(
                 dingtalk_stream.chatbot.ChatbotMessage.TOPIC,
@@ -131,10 +133,9 @@ class DingTalkChannelProvider(BaseChannelProvider):
             self._set_running(True)
 
             logger.info(
-                "[DingTalk] Channel %s (id=%d) started successfully, client_id=%s...",
+                "[DingTalk] Channel %s (id=%d) started successfully",
                 self.channel_name,
                 self.channel_id,
-                self.client_id[:8] if self.client_id else "N/A",
             )
             return True
 
@@ -255,7 +256,7 @@ class DingTalkChannelProvider(BaseChannelProvider):
         """
         status = super().get_status()
         status["extra_info"] = {
-            "client_id": f"{self.client_id[:8]}..." if self.client_id else None,
+            "configured": self._is_configured(),
             "use_ai_card": self.use_ai_card,
             "default_team_id": self.default_team_id,
         }

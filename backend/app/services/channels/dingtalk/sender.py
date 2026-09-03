@@ -100,6 +100,47 @@ class DingTalkRobotSender:
             robot_code=robot_code,
         )
 
+    async def reply_text_emotion(
+        self,
+        open_msg_id: str,
+        open_conversation_id: str,
+        text: str,
+    ) -> bool:
+        """Add DingTalk's text-emotion reaction to the triggering message."""
+
+        try:
+            from alibabacloud_dingtalk.robot_1_0 import client as robot_client
+            from alibabacloud_dingtalk.robot_1_0 import models as robot_models
+            from alibabacloud_tea_openapi import models as open_api_models
+            from alibabacloud_tea_util import models as util_models
+
+            config = open_api_models.Config(protocol="https", region_id="central")
+            client = robot_client.Client(config)
+            token = await self._get_access_token()
+            request = robot_models.RobotReplyEmotionRequest(
+                robot_code=self.client_id,
+                open_msg_id=open_msg_id,
+                open_conversation_id=open_conversation_id,
+                emotion_type=2,
+                emotion_name=text,
+                text_emotion=robot_models.RobotReplyEmotionRequestTextEmotion(
+                    emotion_id="2659900",
+                    emotion_name=text,
+                    text=text,
+                    background_id="im_bg_1",
+                ),
+            )
+            headers = robot_models.RobotReplyEmotionHeaders(
+                x_acs_dingtalk_access_token=token
+            )
+            await client.robot_reply_emotion_with_options_async(
+                request, headers, util_models.RuntimeOptions()
+            )
+            return True
+        except Exception:
+            logger.exception("[DingTalkSender] Failed to add text emotion")
+            return False
+
     async def send_markdown_message(
         self,
         user_ids: List[str],

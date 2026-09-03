@@ -96,6 +96,46 @@ def test_partial_update_does_not_require_assignment_configuration() -> None:
     assert update.assignment_mode is None
 
 
+def test_dingtalk_source_requires_created_event_and_robot() -> None:
+    value = ProjectAutomationCreate.model_validate(
+        {
+            "name": "DingTalk intake",
+            "prompt": "Handle the feedback.",
+            "triggerType": "event",
+            "eventType": "task.created",
+            "eventSource": "dingtalk",
+            "dingtalkChannelId": 7,
+            "assignmentMode": "manual",
+            "agentId": "agent-1",
+        }
+    )
+
+    assert value.event_source == "dingtalk"
+    assert value.dingtalk_channel_id == 7
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"eventType": "task.status_changed", "dingtalkChannelId": 7},
+        {"eventType": "task.created"},
+    ],
+)
+def test_dingtalk_source_rejects_invalid_trigger(payload: dict[str, object]) -> None:
+    with pytest.raises(ValidationError, match="DingTalk source"):
+        ProjectAutomationCreate.model_validate(
+            {
+                "name": "DingTalk intake",
+                "prompt": "Handle the feedback.",
+                "triggerType": "event",
+                "eventSource": "dingtalk",
+                "assignmentMode": "manual",
+                "agentId": "agent-1",
+                **payload,
+            }
+        )
+
+
 def test_workflow_trigger_accepts_a_robot_profile_without_schedule_fields() -> None:
     value = ProjectAutomationCreate.model_validate(
         {

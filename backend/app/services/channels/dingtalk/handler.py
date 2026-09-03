@@ -35,6 +35,7 @@ from app.services.channels.dingtalk.callback import (
     dingtalk_callback_service,
 )
 from app.services.channels.dingtalk.emitter import StreamingResponseEmitter
+from app.services.channels.dingtalk.sender import DingTalkRobotSender
 from app.services.channels.dingtalk.user_resolver import DingTalkUserResolver
 from app.services.channels.handler import BaseChannelHandler, MessageContext
 from app.services.execution.emitters import ResultEmitter
@@ -308,6 +309,7 @@ class WegentChatbotHandler(dingtalk_stream.ChatbotHandler):
         get_default_model_name: Optional[Callable[[], Optional[str]]] = None,
         get_user_mapping_config: Optional[Callable[[], Dict[str, Any]]] = None,
         channel_id: Optional[int] = None,
+        robot_sender: Optional[DingTalkRobotSender] = None,
     ):
         """Initialize the handler.
 
@@ -329,6 +331,7 @@ class WegentChatbotHandler(dingtalk_stream.ChatbotHandler):
         self._use_ai_card = use_ai_card
         self._on_message = on_message
         self._channel_id = channel_id or 0
+        self._robot_sender = robot_sender
 
         # Handle deprecated default_team_id parameter
         if get_default_team_id is None and default_team_id is not None:
@@ -379,6 +382,7 @@ class WegentChatbotHandler(dingtalk_stream.ChatbotHandler):
         Returns:
             Tuple of (status, message) for acknowledgment
         """
+        dedup_key: str | None = None
         try:
             # Parse the incoming message
             incoming_message = ChatbotMessage.from_dict(callback.data)
@@ -430,8 +434,24 @@ class WegentChatbotHandler(dingtalk_stream.ChatbotHandler):
             return AckMessage.STATUS_OK, "OK"
 
         except Exception as e:
+            if dedup_key:
+                await cache_manager.delete(dedup_key)
             self.logger.exception("[DingTalkHandler] Error processing message: %s", e)
             return AckMessage.STATUS_SYSTEM_EXCEPTION, str(e)
+
+    async def _download_automation_media(self, download_code: str) -> tuple[bytes, str]:
+        """Download one referenced asset strictly for automation ingestion."""
+
+        import httpx
+
+        download_url = self.get_image_download_url(download_code)
+        if not download_url:
+            raise RuntimeError("DingTalk media download URL is unavailable")
+        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+            response = await client.get(download_url)
+            response.raise_for_status()
+        content_type = response.headers.get("Content-Type", "image/png")
+        return response.content, content_type.split(";", 1)[0].strip()
 
     def _build_legacy_message_context(
         self, incoming_message: ChatbotMessage, callback_data: Dict[str, Any]
@@ -646,6 +666,23 @@ class WegentChatbotHandler(dingtalk_stream.ChatbotHandler):
             db = SessionLocal()
             try:
                 user = await self._channel_handler.resolve_user(db, message_context)
+                if self._robot_sender is not None:
+                    from app.services.project_automation_dingtalk import (
+                        project_automation_dingtalk_ingress,
+                    )
+
+                    handled = await project_automation_dingtalk_ingress.handle(
+                        db,
+                        channel_id=self._channel_id,
+                        callback=callback_data,
+                        user=user,
+                        is_group=message_context.conversation_type == "group",
+                        is_mention=message_context.is_mention,
+                        download=self._download_automation_media,
+                        robot_sender=self._robot_sender,
+                    )
+                    if handled:
+                        return True
                 if user and self._channel_id:
                     try:
                         self.logger.info(

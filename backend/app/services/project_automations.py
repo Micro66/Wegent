@@ -18,6 +18,7 @@ from app.db.timezone import database_datetime_timezone
 from app.models.delivery import (
     CloudProject,
     LoopItem,
+    ProjectAutomationDingTalkBinding,
     ProjectAutomationRule,
     ProjectAutomationRun,
     ProjectChatAgent,
@@ -35,6 +36,7 @@ from app.schemas.project_automation import (
 from app.services.cloud_projects.access import require_cloud_project_role
 from app.services.cloud_projects.service import cloud_project_service
 from app.services.loop_item_executions.service import loop_item_execution_service
+from app.services.project_automation_dingtalk_binding import require_dingtalk_channel
 from app.services.project_automation_domain import (
     ProjectAutomationEvent,
     assignment_mode,
@@ -64,6 +66,27 @@ from app.services.share import team_share_service
 from app.services.workflow_stage_context import workflow_stage_context_resolver
 
 logger = logging.getLogger(__name__)
+
+
+def _validate_event_source(
+    *, trigger_type: str, event_type: str | None, source: str, channel_id: int | None
+) -> None:
+    if source == "dingtalk":
+        if trigger_type != "event" or event_type != "task.created":
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "DingTalk source requires a task.created event trigger",
+            )
+        if channel_id is None:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "DingTalk robot is required",
+            )
+    elif channel_id is not None:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "DingTalk robot is only valid for DingTalk source",
+        )
 
 
 def _canonical_event_config(
@@ -222,6 +245,14 @@ class ProjectAutomationService:
             runtime_user_id=values.runtime_user_id,
         )
         validate_trigger(values.trigger_type, values.event_type, values.cron_expression)
+        _validate_event_source(
+            trigger_type=values.trigger_type,
+            event_type=values.event_type,
+            source=values.event_source,
+            channel_id=values.dingtalk_channel_id,
+        )
+        if values.event_source == "dingtalk":
+            require_dingtalk_channel(db, int(values.dingtalk_channel_id))
         now = utcnow()
         next_run_at = (
             _next_run(str(values.cron_expression), values.timezone, now)
@@ -229,7 +260,9 @@ class ProjectAutomationService:
             else None
         )
         webhook_secret = (
-            secrets.token_urlsafe(32) if values.trigger_type == "event" else None
+            secrets.token_urlsafe(32)
+            if values.trigger_type == "event" and values.event_source == "issue"
+            else None
         )
         row = ProjectAutomationRule(
             cloud_project_id=project_id,
@@ -257,6 +290,8 @@ class ProjectAutomationService:
                 runtime_profile_id=values.runtime_profile_id,
                 runtime_user_id=values.runtime_user_id,
                 base={
+                    "event_source": values.event_source,
+                    "dingtalk_channel_id": values.dingtalk_channel_id,
                     "trigger_type": values.trigger_type,
                     "event_type": (
                         values.event_type if values.trigger_type == "event" else None
@@ -357,6 +392,8 @@ class ProjectAutomationService:
             raise HTTPException(status.HTTP_409_CONFLICT, "Automation version conflict")
 
         rule_metadata = _metadata(row)
+        previous_event_source = str(rule_metadata.get("event_source") or "issue")
+        previous_dingtalk_channel_id = integer(rule_metadata.get("dingtalk_channel_id"))
         trigger_type = values.trigger_type or str(
             rule_metadata.get("trigger_type") or "schedule"
         )
@@ -381,6 +418,26 @@ class ProjectAutomationService:
             event_type = None
             expression = None
         validate_trigger(trigger_type, event_type, expression)
+        event_source = values.event_source or str(
+            rule_metadata.get("event_source") or "issue"
+        )
+        if trigger_type != "event":
+            event_source = "issue"
+        dingtalk_channel_id = (
+            values.dingtalk_channel_id
+            if "dingtalk_channel_id" in values.model_fields_set
+            else integer(rule_metadata.get("dingtalk_channel_id"))
+        )
+        if event_source != "dingtalk":
+            dingtalk_channel_id = None
+        _validate_event_source(
+            trigger_type=trigger_type,
+            event_type=event_type,
+            source=event_source,
+            channel_id=dingtalk_channel_id,
+        )
+        if event_source == "dingtalk":
+            require_dingtalk_channel(db, int(dingtalk_channel_id))
 
         if values.assignment_mode is None:
             configured_mode = assignment_mode(rule_metadata)
@@ -464,6 +521,8 @@ class ProjectAutomationService:
         rule_metadata.update(
             {
                 "trigger_type": trigger_type,
+                "event_source": event_source,
+                "dingtalk_channel_id": dingtalk_channel_id,
                 "event_type": event_type,
                 "event_config": event_config,
                 "cron_expression": expression,
@@ -497,6 +556,14 @@ class ProjectAutomationService:
         )
         row.updated_by_user_id = user_id
         row.version += 1
+        if (
+            event_source != "dingtalk"
+            or previous_event_source != event_source
+            or previous_dingtalk_channel_id != dingtalk_channel_id
+        ):
+            db.query(ProjectAutomationDingTalkBinding).filter(
+                ProjectAutomationDingTalkBinding.parent_id == automation_id
+            ).delete(synchronize_session=False)
         db.commit()
         db.refresh(row)
         return self._rule_view(db, row)
@@ -511,7 +578,10 @@ class ProjectAutomationService:
         require_cloud_project_role(db, project_id, user_id, BaseRole.Maintainer)
         row = self._rule(db, project_id, automation_id, for_update=True)
         rule_metadata = _metadata(row)
-        if rule_metadata.get("trigger_type") != "event":
+        if (
+            rule_metadata.get("trigger_type") != "event"
+            or rule_metadata.get("event_source") != "issue"
+        ):
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_ENTITY,
                 "Only event automations have webhook secrets",
@@ -542,6 +612,9 @@ class ProjectAutomationService:
         if project is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Cloud project not found")
         row = self._rule(db, project_id, automation_id, for_update=True)
+        db.query(ProjectAutomationDingTalkBinding).filter(
+            ProjectAutomationDingTalkBinding.parent_id == automation_id
+        ).delete(synchronize_session=False)
         self._mark_deleted(db, row, user_id=user_id, deleted_at=utcnow())
         project_metadata = dict(project.metadata_json or {})
         if text(project_metadata.get("workflow_automation_id")) == automation_id:
@@ -583,6 +656,9 @@ class ProjectAutomationService:
                 user_id=user_id,
                 deleted_at=deleted_at,
             )
+        db.query(ProjectAutomationDingTalkBinding).filter(
+            ProjectAutomationDingTalkBinding.cloud_project_id == project_id
+        ).delete(synchronize_session=False)
         logger.info(
             "[ProjectAutomation] Deleted project rules project=%s count=%s user=%s",
             project_id,
@@ -1379,6 +1455,11 @@ class ProjectAutomationService:
             model = None
         last_run = rule_metadata.get("last_run_at")
         database_timezone = database_datetime_timezone(db)
+        binding = (
+            db.query(ProjectAutomationDingTalkBinding)
+            .filter(ProjectAutomationDingTalkBinding.parent_id == str(row.id))
+            .one_or_none()
+        )
         return {
             "id": row.id,
             "project_id": str(row.cloud_project_id),
@@ -1387,10 +1468,25 @@ class ProjectAutomationService:
             "trigger_type": str(rule_metadata.get("trigger_type") or "schedule"),
             "event_type": rule_metadata.get("event_type"),
             "event_config": rule_metadata.get("event_config") or {},
+            "event_source": str(rule_metadata.get("event_source") or "issue"),
+            "dingtalk_channel_id": integer(rule_metadata.get("dingtalk_channel_id")),
+            "dingtalk_binding": (
+                {
+                    "status": "bound",
+                    "conversation_title": binding.conversation_title or None,
+                    "bound_at": _utc_aware(binding.updated_at, database_timezone),
+                    "expires_at": None,
+                }
+                if binding is not None
+                else None
+            ),
             "assignment_mode": configured_mode,
             "manager_type": configured_manager,
             "webhook_event_id": (
-                row.id if rule_metadata.get("trigger_type") == "event" else None
+                row.id
+                if rule_metadata.get("trigger_type") == "event"
+                and rule_metadata.get("event_source") == "issue"
+                else None
             ),
             "webhook_secret": webhook_secret,
             "cron_expression": rule_metadata.get("cron_expression"),
@@ -1548,6 +1644,4 @@ class ProjectAutomationService:
 
 
 project_automation_service = ProjectAutomationService()
-project_automation_processor = ProjectAutomationProcessor(
-    project_automation_service._create_run
-)
+project_automation_processor = ProjectAutomationProcessor()

@@ -60,7 +60,9 @@ export interface AutomationUiGraph {
 
 export interface AutomationUiTrigger {
   type: 'event' | 'schedule'
-  source: 'issue'
+  source: 'issue' | 'dingtalk'
+  dingtalkChannelId?: number | null
+  dingtalkBinding?: ProjectAutomationRule['dingtalkBinding']
   startMode: 'immediate' | 'status'
   event: 'created' | 'status_changed'
   tags: string[]
@@ -431,7 +433,9 @@ export function automationRuleFromBackend(rule: ProjectAutomationRule): Automati
     updatedAt: formatAutomationTimestamp(rule.updatedAt),
     trigger: {
       type: rule.triggerType === 'schedule' ? 'schedule' : 'event',
-      source: 'issue',
+      source: rule.eventSource ?? 'issue',
+      dingtalkChannelId: rule.dingtalkChannelId ?? null,
+      dingtalkBinding: rule.dingtalkBinding ?? null,
       startMode,
       event: startMode === 'status' ? 'status_changed' : 'created',
       tags: Array.isArray(rule.eventConfig.tags)
@@ -869,6 +873,11 @@ export function automationInputFromUi(
         },
       } satisfies StoredAutomationFlowV2,
     },
+    eventSource: rule.trigger.source,
+    dingtalkChannelId:
+      eventTrigger && rule.trigger.source === 'dingtalk'
+        ? (rule.trigger.dingtalkChannelId ?? null)
+        : null,
     cronExpression: eventTrigger ? null : buildCron(rule.trigger),
     timezone: rule.trigger.schedule.timezone,
     enabled: rule.enabled,

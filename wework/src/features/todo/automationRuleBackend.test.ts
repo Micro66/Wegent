@@ -151,6 +151,33 @@ describe('automationRuleBackend', () => {
     expect(mapped.trigger.event).toBe('status_changed')
   })
 
+  test('maps and persists DingTalk event source configuration', () => {
+    const mapped = automationRuleFromBackend(
+      backendRule({
+        eventType: 'task.created',
+        eventSource: 'dingtalk',
+        dingtalkChannelId: 19,
+        dingtalkBinding: {
+          status: 'bound',
+          conversationTitle: 'Feedback group',
+          boundAt: '2026-09-03T10:00:00Z',
+          expiresAt: null,
+        },
+      })
+    )
+
+    expect(mapped.trigger).toMatchObject({
+      source: 'dingtalk',
+      dingtalkChannelId: 19,
+      dingtalkBinding: { status: 'bound', conversationTitle: 'Feedback group' },
+    })
+    expect(automationInputFromUi(mapped, 7)).toMatchObject({
+      eventSource: 'dingtalk',
+      dingtalkChannelId: 19,
+      eventType: 'task.created',
+    })
+  })
+
   test('formats automation timestamps in Asia/Shanghai', () => {
     const mapped = automationRuleFromBackend(backendRule({ updatedAt: '2026-08-26T09:18:00Z' }))
 

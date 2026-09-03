@@ -7,7 +7,7 @@ import type {
   CloudProjectMember,
   ProjectWorkflowDefinition,
 } from '@/api/deliveries'
-import type { ProjectAutomationRule } from '@/api/projectAutomations'
+import type { AutomationDingTalkChannel, ProjectAutomationRule } from '@/api/projectAutomations'
 import type { ExecutionListApi } from '@/features/todo/ProjectQueueView'
 import { modelSelectionIdentityOptions } from '@/features/workbench/runtimeModelSelection'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
@@ -291,6 +291,7 @@ export function ProjectAutomationView(props: ProjectAutomationViewProps) {
   const runsRequestRef = useRef<Promise<AutomationUiRun[]> | null>(null)
   const [loading, setLoading] = useState(() => !initialCache)
   const [error, setError] = useState('')
+  const [dingtalkChannels, setDingtalkChannels] = useState<AutomationDingTalkChannel[]>([])
 
   useEffect(() => {
     projectRef.current = project
@@ -378,6 +379,68 @@ export function ProjectAutomationView(props: ProjectAutomationViewProps) {
   useEffect(() => {
     void Promise.resolve().then(() => load())
   }, [load])
+
+  useEffect(() => {
+    if (!projectAutomationApi) return
+    void projectAutomationApi
+      .listDingTalkChannels()
+      .then(channels =>
+        setDingtalkChannels(channels.filter(channel => channel.channelType === 'dingtalk'))
+      )
+      .catch(loadError =>
+        setError(loadError instanceof Error ? loadError.message : String(loadError))
+      )
+  }, [projectAutomationApi])
+
+  useEffect(() => {
+    const pairing = rules.filter(
+      rule => rule.persisted && rule.trigger.dingtalkBinding?.status === 'pairing'
+    )
+    if (!projectAutomationApi || pairing.length === 0) return
+    const timer = window.setInterval(() => {
+      void Promise.all(
+        pairing.map(async rule => ({
+          rule,
+          binding: await projectAutomationApi.getDingTalkBinding(projectId, rule.id),
+        }))
+      )
+        .then(results => {
+          setRules(current =>
+            current.map(rule => {
+              const result = results.find(candidate => candidate.rule.id === rule.id)
+              return result
+                ? { ...rule, trigger: { ...rule.trigger, dingtalkBinding: result.binding } }
+                : rule
+            })
+          )
+        })
+        .catch(pollError =>
+          setError(pollError instanceof Error ? pollError.message : String(pollError))
+        )
+    }, 2000)
+    return () => window.clearInterval(timer)
+  }, [projectAutomationApi, projectId, rules])
+
+  const updateDingTalkBinding = useCallback(
+    async (rule: AutomationUiRule, action: 'begin' | 'cancel' | 'remove') => {
+      if (!projectAutomationApi) throw new Error('当前项目没有可用的自动化服务')
+      const binding =
+        action === 'begin'
+          ? await projectAutomationApi.beginDingTalkBinding(projectId, rule.id, rule.version)
+          : action === 'cancel'
+            ? await projectAutomationApi.cancelDingTalkBinding(projectId, rule.id)
+            : await projectAutomationApi.removeDingTalkBinding(projectId, rule.id)
+      setRules(current =>
+        current.map(candidate =>
+          candidate.id === rule.id
+            ? { ...candidate, trigger: { ...candidate.trigger, dingtalkBinding: binding } }
+            : candidate
+        )
+      )
+      return binding
+    },
+    [projectAutomationApi, projectId]
+  )
 
   const refreshRuns = useCallback(async (): Promise<AutomationUiRun[]> => {
     if (!projectAutomationApi) throw new Error('当前项目没有可用的自动化服务')
@@ -579,6 +642,14 @@ export function ProjectAutomationView(props: ProjectAutomationViewProps) {
     [canManageAgents, currentUserId, onProjectUpdated, project, projectAutomationApi, projectId]
   )
 
+  const beginDingTalkBinding = useCallback(
+    async (rule: AutomationUiRule) => {
+      const saved = await persistRule(rule)
+      return updateDingTalkBinding(saved, 'begin')
+    },
+    [persistRule, updateDingTalkBinding]
+  )
+
   const toggleRule = useCallback(
     async (rule: AutomationUiRule, enabled: boolean) => {
       if (!projectAutomationApi) throw new Error('当前项目没有可用的自动化服务')
@@ -671,6 +742,10 @@ export function ProjectAutomationView(props: ProjectAutomationViewProps) {
       onToggleRule={toggleRule}
       onDuplicateRule={duplicateRule}
       onDeleteRule={deleteRule}
+      dingtalkChannels={dingtalkChannels}
+      onBeginDingTalkBinding={beginDingTalkBinding}
+      onCancelDingTalkBinding={rule => updateDingTalkBinding(rule, 'cancel')}
+      onRemoveDingTalkBinding={rule => updateDingTalkBinding(rule, 'remove')}
     />
   )
 }

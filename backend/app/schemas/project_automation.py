@@ -31,6 +31,18 @@ AutomationRuntimeSource = Literal[
     "issue_creator",
     "runtime_user",
 ]
+AutomationEventSource = Literal["issue", "dingtalk"]
+
+
+class ProjectAutomationDingTalkBindingView(ProjectChatSchema):
+    status: Literal["unbound", "pairing", "bound"]
+    conversation_title: str | None = None
+    bound_at: datetime | None = None
+    expires_at: datetime | None = None
+
+
+class ProjectAutomationDingTalkPairRequest(ProjectChatSchema):
+    version: int = Field(ge=1)
 
 
 class ProjectAutomationManagerAssign(ProjectChatSchema):
@@ -94,6 +106,8 @@ class ProjectAutomationCreate(ProjectAutomationAssignmentSchema):
     trigger_type: Literal["schedule", "event", "workflow"] = "schedule"
     event_type: Literal["task.created", "task.status_changed"] | None = None
     event_config: dict[str, Any] = Field(default_factory=dict)
+    event_source: AutomationEventSource = "issue"
+    dingtalk_channel_id: int | None = Field(default=None, ge=1)
     cron_expression: str | None = Field(default=None, min_length=1, max_length=100)
     timezone: str = Field(default="Asia/Shanghai", min_length=1, max_length=64)
     assignment_mode: AutomationAssignmentMode = "manual"
@@ -122,7 +136,17 @@ class ProjectAutomationCreate(ProjectAutomationAssignmentSchema):
             role_source=self.role_source,
         )
         self._validate_runtime()
+        self._validate_event_source()
         return self
+
+    def _validate_event_source(self) -> None:
+        if self.event_source == "dingtalk":
+            if self.trigger_type != "event" or self.event_type != "task.created":
+                raise ValueError("DingTalk source requires task.created event trigger")
+            if self.dingtalk_channel_id is None:
+                raise ValueError("dingtalk_channel_id is required for DingTalk source")
+        elif self.dingtalk_channel_id is not None:
+            raise ValueError("dingtalk_channel_id is only valid for DingTalk source")
 
     def _validate_runtime(self) -> None:
         if self.assignment_mode == "ai_managed" and self.manager_type == "wegent":
@@ -158,6 +182,8 @@ class ProjectAutomationUpdate(ProjectAutomationAssignmentSchema):
     trigger_type: Literal["schedule", "event", "workflow"] | None = None
     event_type: Literal["task.created", "task.status_changed"] | None = None
     event_config: dict[str, Any] | None = None
+    event_source: AutomationEventSource | None = None
+    dingtalk_channel_id: int | None = Field(default=None, ge=1)
     assignment_mode: AutomationAssignmentMode | None = None
     manager_type: AutomationManagerType | None = None
     cron_expression: str | None = Field(default=None, min_length=1, max_length=100)
@@ -218,6 +244,9 @@ class ProjectAutomationView(ProjectChatSchema):
     trigger_type: Literal["schedule", "event", "workflow"]
     event_type: Literal["task.created", "task.status_changed"] | None
     event_config: dict[str, Any]
+    event_source: AutomationEventSource = "issue"
+    dingtalk_channel_id: int | None = None
+    dingtalk_binding: ProjectAutomationDingTalkBindingView | None = None
     assignment_mode: AutomationAssignmentMode
     manager_type: AutomationManagerType | None
     webhook_event_id: str | None

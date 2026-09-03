@@ -260,6 +260,8 @@ export const buildAutomationInput = (
     triggerType: draft.triggerType,
     eventType: draft.triggerType === 'event' ? ('task.created' as const) : null,
     eventConfig,
+    eventSource: 'issue' as const,
+    dingtalkChannelId: null,
     cronExpression: draft.triggerType === 'schedule' ? scheduleToCron(schedule) : null,
     timezone: draft.timezone,
     enabled: draft.enabled,

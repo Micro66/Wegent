@@ -260,6 +260,38 @@ class ProjectAutomationRun(LoopNode):
     __mapper_args__ = {"polymorphic_identity": "automation_run"}
 
 
+class ProjectAutomationDingTalkBinding(LoopNode):
+    """The active DingTalk group bound to one project automation rule."""
+
+    __mapper_args__ = {"polymorphic_identity": "automation_dt_binding"}
+
+    @property
+    def automation_id(self) -> str:
+        return str(self.parent_id or "")
+
+    @property
+    def project_id(self) -> str:
+        return str(self.cloud_project_id or "")
+
+    @property
+    def channel_id(self) -> int | None:
+        value = (self.metadata_json or {}).get("channel_id")
+        return value if isinstance(value, int) else None
+
+    @property
+    def conversation_id(self) -> str:
+        value = (self.metadata_json or {}).get("conversation_id")
+        return value if isinstance(value, str) else ""
+
+    @property
+    def conversation_title(self) -> str:
+        return str(self.title or "")
+
+    @property
+    def bound_by_user_id(self) -> int | None:
+        return self.created_by_user_id
+
+
 class ProjectWorkflowRun(LoopNode):
     """One durable AI planning attempt for an Issue."""
 
