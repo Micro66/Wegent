@@ -273,7 +273,6 @@ class LoopItemExecutionView(ProjectChatSchema):
     execution_scope: str = ""
     last_event_seq: int = 0
     termination_reason: str = ""
-    retry_attempt: int = 0
     error_message: str = ""
     execution_note: str = ""
     approval_status: str | None = None

@@ -967,7 +967,6 @@ def test_runtime_cancelled_is_terminal_and_never_requeued(
 
     assert cancelled is not None
     assert cancelled.status == "cancelled"
-    assert cancelled.retry_attempt == 0
     test_db.refresh(run)
     test_db.refresh(activity)
     assert run.status == "cancelled"
@@ -1027,7 +1026,6 @@ def test_failed_runtime_event_after_cancel_request_is_never_requeued(
     assert cancelled is not None
     assert cancelled.id == original.id
     assert cancelled.status == "cancelled"
-    assert cancelled.retry_attempt == 0
     executions = (
         test_db.query(LoopItemExecution)
         .filter(LoopItemExecution.loop_item_id == original.loop_item_id)
@@ -1060,7 +1058,7 @@ def test_delivered_cancel_waits_for_runtime_stop_confirmation(
     assert confirmed.termination_reason == "runtime_cancel_acknowledged"
 
 
-def test_runtime_retry_uses_a_new_execution_attempt(
+def test_runtime_failure_is_terminal_without_retry(
     test_db: Session, test_user: User
 ) -> None:
     project = _make_project(test_db, test_user)
@@ -1104,7 +1102,7 @@ def test_runtime_retry_uses_a_new_execution_attempt(
     )
     assert running is not None and running.status == "running"
 
-    retry = loop_item_execution_service.handle_runtime_event(
+    failed = loop_item_execution_service.handle_runtime_event(
         test_db,
         device_id=claimed.runtime_device_id,
         runtime_task_id=claimed.runtime_task_id,
@@ -1112,22 +1110,18 @@ def test_runtime_retry_uses_a_new_execution_attempt(
         payload={"eventSeq": 2, "error": "model crashed", "data": {}},
     )
 
-    assert retry is not None
-    assert retry.id != original.id
-    assert retry.status == "queued"
-    assert retry.attempt_no == 2
-    assert retry.previous_execution_id == original.id
-    assert retry.runtime_task_id != claimed.runtime_task_id
-    assert retry.runtime_selection == {
-        "model": "public-model",
-        "model_type": "public",
-        "model_options": {"reasoningEffort": "high"},
-    }
-    assert retry.runtime_origin_context == {
-        "runtime_source": "issue_snapshot",
-        "workspace_binding": {"type": "standalone"},
-    }
-    assert retry.runtime_request == {}
+    assert failed is not None
+    assert failed.id == original.id
+    assert failed.status == "failed"
+    assert failed.attempt_no == 1
+    assert failed.previous_execution_id == 0
+    assert failed.runtime_task_id == claimed.runtime_task_id
+    assert (
+        test_db.query(LoopItemExecution)
+        .filter(LoopItemExecution.loop_item_id == original.loop_item_id)
+        .count()
+        == 1
+    )
     test_db.refresh(original)
     assert original.status == "failed"
     assert original.last_event_seq == 2
@@ -1303,7 +1297,7 @@ def test_complete_truncates_long_execution_note(
     assert completed.execution_note == "验" * 500
 
 
-def test_unstarted_claim_lease_expiry_releases_without_consuming_retry(
+def test_unstarted_claim_lease_expiry_requeues_same_execution(
     test_db: Session, test_user: User
 ) -> None:
     project = _make_project(test_db, test_user)
@@ -1337,10 +1331,9 @@ def test_unstarted_claim_lease_expiry_releases_without_consuming_retry(
     assert (requeued, unknown) == (1, 0)
     test_db.refresh(claimed)
     assert claimed.status == "queued"
-    assert claimed.retry_attempt == 0
 
     # A second abandoned claim is equally safe to release because Start was
-    # never delivered; infrastructure availability does not consume run retry.
+    # never delivered; infrastructure recovery keeps the same execution.
     re_claimed_rows = loop_item_execution_service.claim_batch_for_device(
         test_db,
         execution_device_id="cloud-device-1",
@@ -1364,7 +1357,6 @@ def test_unstarted_claim_lease_expiry_releases_without_consuming_retry(
     assert (requeued, unknown) == (1, 0)
     test_db.refresh(re_claimed)
     assert re_claimed.status == "queued"
-    assert re_claimed.retry_attempt == 0
 
 
 def test_recovery_scan_repairs_terminal_automation_projection(
@@ -1444,7 +1436,6 @@ def test_recovery_scan_repairs_terminal_automation_projection(
         "run_status": "queued",
     }
     execution.status = "failed"
-    execution.retry_attempt = execution.max_retries
     execution.error_message = "manager dispatch failed"
     execution.completed_at = datetime(2026, 8, 14, 8, 22, 40)
     test_db.commit()
@@ -2579,51 +2570,6 @@ def test_requeue_drops_empty_placeholder_activity(
     assert messages == []
 
 
-def test_placeholder_cleanup_allows_reopening_same_runtime(
-    test_db: Session, test_user: User
-) -> None:
-    from app.models.project_chat_message import ProjectChatMessage
-
-    project = _make_project(test_db, test_user)
-    bot = _make_bot(test_db, project, test_user)
-    item = _make_item(test_db, project, test_user)
-    execution = _make_execution(test_db, item, bot, test_user)
-    claimed = loop_item_execution_service.claim(
-        test_db,
-        agent_id=bot.id,
-        execution_device_id="cloud-device-1",
-        environment="cloud",
-        owner_user_id=test_user.id,
-        runtime_instance_id="runtime-1",
-        device_capacity=1,
-        runtime_active=0,
-        runtime_active_task_ids=set(),
-    )
-    assert claimed is not None
-
-    first = loop_item_execution_service.open_execution_activity(
-        test_db, execution=claimed
-    )
-    loop_item_execution_service.close_placeholder_activity(test_db, execution=claimed)
-    second = loop_item_execution_service.open_execution_activity(
-        test_db, execution=claimed
-    )
-    assert first is not None and second is not None
-    assert first.message_id == second.message_id
-
-    active = (
-        test_db.query(ProjectChatMessage)
-        .filter(
-            ProjectChatMessage.runtime_device_id == "cloud-device-1",
-            ProjectChatMessage.runtime_task_id == claimed.runtime_task_id,
-            ProjectChatMessage.sender_type == "agent",
-            loop_datetime_is_unset(ProjectChatMessage.deleted_at),
-        )
-        .all()
-    )
-    assert [message.message_id for message in active] == [second.message_id]
-
-
 def test_terminal_report_closes_streaming_activity(
     test_db: Session, test_user: User
 ) -> None:
@@ -2693,7 +2639,6 @@ def test_terminal_failure_closes_streaming_activity_with_error(
         test_db,
         execution_id=claimed.id,
         error="stream disconnected before completion",
-        requeue=False,
     )
     message = (
         test_db.query(ProjectChatMessage)
@@ -3751,7 +3696,7 @@ def test_runtime_reconciliation_prefers_failure_over_stale_completed_turn(
     with patch(
         "app.services.project_chat.push.push_project_chat_message"
     ) as push_message:
-        retry = loop_item_execution_service.reconcile_runtime_snapshot(
+        failed = loop_item_execution_service.reconcile_runtime_snapshot(
             test_db,
             execution_id=claimed.id,
             runtime_status="failed",
@@ -3759,15 +3704,17 @@ def test_runtime_reconciliation_prefers_failure_over_stale_completed_turn(
             turn_status="completed",
         )
 
-    assert retry is not None
-    assert retry.id != claimed.id
-    assert retry.status == "queued"
-    assert retry.previous_execution_id == claimed.id
-    failed = test_db.get(LoopItemExecution, claimed.id)
     assert failed is not None
+    assert failed.id == claimed.id
     assert failed.status == "failed"
     assert failed.observed_state == "failed"
     assert failed.termination_reason == "runtime_reconciled_failed"
+    assert (
+        test_db.query(LoopItemExecution)
+        .filter(LoopItemExecution.loop_item_id == execution.loop_item_id)
+        .count()
+        == 1
+    )
     push_message.assert_called_once()
 
 

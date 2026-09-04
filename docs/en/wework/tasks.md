@@ -35,7 +35,7 @@ Hover anywhere on a card to open a lightweight task workspace. It initially show
 
 Project spaces provide an **Automation** entry that manages robot members and their execution queue in one place. A robot can be assigned as the owner of a project task: it claims the task, executes it on the local or a selected device, and writes the result or failure back into the task comment thread for human acceptance.
 
-The execution queue shows each robot task's state (pending, queued, claimed, running, failed for retry) and supports keyword search. Completed automation runs remain as comments in the task detail, where a human can accept the result or ask the robot to continue.
+The execution queue shows each robot task's state (pending, queued, claimed, running, or failed) and supports keyword search. Failed tasks are not retried automatically; a user must explicitly request a rerun. Completed automation runs remain as comments in the task detail, where a human can accept the result or ask the robot to continue.
 
 Robots in a local project space can only bind to the local executor or a companion App device; cloud devices are reserved for cloud project spaces. The local App claims the queue every 3 seconds, keeps running tasks leased, and automatically requeues runs that were interrupted after their lease expired, so a run can never stay stuck in "running".
 

@@ -928,8 +928,6 @@ def test_alive_execution_keeps_task_ai_state_running(
         completed_at=EPOCH_TIME,
         lease_expires_at=now + timedelta(minutes=5),
         heartbeat_at=now,
-        retry_attempt=0,
-        max_retries=1,
         error_message="",
         execution_note="",
         approval_status="",

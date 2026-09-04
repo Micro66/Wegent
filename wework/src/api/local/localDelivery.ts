@@ -161,8 +161,6 @@ export interface LocalLoopItemExecution {
   execution_scope: string
   last_event_seq: number
   termination_reason: string
-  retry_attempt: number
-  max_retries?: number
   error_message: string
   execution_note: string
   approval_status?: string | null

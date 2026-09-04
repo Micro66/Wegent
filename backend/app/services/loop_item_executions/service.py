@@ -155,7 +155,7 @@ def execution_scope_for(
     team_id: int | None = None,
     automation_run_id: str,
 ) -> str:
-    """Return the concurrency and retry scope for one execution attempt."""
+    """Return the concurrency scope for one execution attempt."""
 
     if agent_id:
         return f"project_robot:{loop_item_id}"
@@ -173,7 +173,6 @@ PRIORITY_WEIGHTS = {
     "urgent": 40,
 }
 
-DEFAULT_MAX_RETRIES = 1
 DEFAULT_LEASE_SECONDS = 5 * 60
 DEFAULT_STALL_TEXT_TIMEOUT_SECONDS = 20 * 60
 
@@ -811,7 +810,6 @@ class LoopItemExecutionService:
             ),
             priority_weight=priority_weight(priority),
             queued_at=now,
-            max_retries=DEFAULT_MAX_RETRIES,
             approval_status="pending" if requires_approval else "",
             execution_note=(
                 "Select a device and model before this execution can start"
@@ -1842,7 +1840,6 @@ class LoopItemExecutionService:
             execution_id=row.id,
             error=error,
             note=note or "runtime_preflight_failed",
-            requeue=False,
             expected_status=STATUS_CLAIMED,
             expected_version=row.version,
         )
@@ -2154,15 +2151,6 @@ class LoopItemExecutionService:
             push_project_chat_message(view.model_dump(by_alias=True))
         return view
 
-    def close_placeholder_activity(
-        self, db: Session, *, execution: LoopItemExecution
-    ) -> None:
-        """Return a linked activity card to queued state after a retry."""
-
-        linked = self._apply_requeued_projection(db, execution=execution)
-        db.commit()
-        self._push_activity_after_commit(db, linked)
-
     def complete(
         self,
         db: Session,
@@ -2215,7 +2203,6 @@ class LoopItemExecutionService:
         execution_id: int,
         error: str,
         note: Optional[str] = None,
-        requeue: bool = False,
         requeue_infra: bool = False,
         expected_status: Optional[str] = None,
         expected_version: Optional[int] = None,
@@ -2223,24 +2210,19 @@ class LoopItemExecutionService:
         event_seq: Optional[int] = None,
         termination_reason: str = "runtime_failed",
     ) -> Optional[LoopItemExecution]:
-        """Mark a run failed, requeue it when retries remain, or requeue it
-        after a transient infrastructure failure.
+        """Mark a run failed or restore its queue position after an
+        infrastructure failure before Runtime started it.
 
         ``requeue_infra`` covers device/transport failures (device offline,
         emit rejected, executor session start timeout). Such failures must not
-        consume ``retry_attempt``: the device may come back at any moment, and
-        the run should stay queued for the next scan instead of terminally
-        failing after one or two attempts.
+        create a new execution attempt: the device may come back at any moment,
+        and the same unstarted run should stay queued for the next scan.
         """
 
         row = db.get(LoopItemExecution, execution_id)
         if row is None or row.status in TERMINAL_STATUSES:
             return row
-        now = utcnow()
-        should_requeue = requeue_infra or (
-            requeue and row.retry_attempt < row.max_retries
-        )
-        if not should_requeue:
+        if not requeue_infra:
             return self._transition_terminal(
                 db,
                 execution_id=execution_id,
@@ -2256,54 +2238,19 @@ class LoopItemExecutionService:
                 termination_reason=termination_reason,
             )
 
-        if requeue and not requeue_infra:
-            previous = self._transition_terminal(
-                db,
-                execution_id=execution_id,
-                terminal_status=STATUS_FAILED,
-                note=note,
-                content=error,
-                error=error,
-                commit=False,
-                expected_status=expected_status,
-                expected_version=expected_version,
-                observed_state=OBSERVED_FAILED,
-                observed_at=observed_at,
-                event_seq=event_seq,
-                termination_reason=termination_reason,
-            )
-            if previous is None or previous.status != STATUS_FAILED:
-                db.rollback()
-                return db.get(LoopItemExecution, execution_id)
-            retry = self._new_retry_attempt(previous, queued_at=now)
-            db.add(retry)
-            db.flush()
-            retry.runtime_task_id = runtime_task_id_for(retry.id)
-            self._set_automation_run_status(db, retry, "queued")
-            db.commit()
-            db.refresh(retry)
-            self.publish_terminal_projection(db, previous)
-            return retry
-
+        now = utcnow()
         values: dict[str, Any] = {
             "status": STATUS_QUEUED,
             "queued_at": now,
             "lease_expires_at": EPOCH_TIME,
             "error_message": self._error_text(error)[:2000],
             "version": LoopItemExecution.version + 1,
+            "start_requested_at": EPOCH_TIME,
+            "observed_state": OBSERVED_UNCONFIRMED,
+            "observed_at": EPOCH_TIME,
+            "sync_state": SYNC_PENDING,
+            "termination_reason": "",
         }
-        if requeue_infra:
-            values.update(
-                {
-                    "start_requested_at": EPOCH_TIME,
-                    "observed_state": OBSERVED_UNCONFIRMED,
-                    "observed_at": EPOCH_TIME,
-                    "sync_state": SYNC_PENDING,
-                    "termination_reason": "",
-                }
-            )
-        if requeue and not requeue_infra:
-            values["retry_attempt"] = LoopItemExecution.retry_attempt + 1
         if note:
             values["execution_note"] = self._execution_note(note)
         query = db.query(LoopItemExecution).filter(
@@ -2328,7 +2275,7 @@ class LoopItemExecutionService:
                 raise RuntimeError(
                     f"Requeued execution disappeared after CAS: {execution_id}"
                 )
-            activity = self._apply_requeued_projection(db, execution=row)
+            activity = self._apply_queue_recovery_projection(db, execution=row)
             db.commit()
         except Exception:
             db.rollback()
@@ -2336,43 +2283,6 @@ class LoopItemExecutionService:
         db.refresh(row)
         self._push_activity_after_commit(db, activity)
         return row
-
-    @staticmethod
-    def _new_retry_attempt(
-        previous: LoopItemExecution, *, queued_at: datetime
-    ) -> LoopItemExecution:
-        """Create an isolated attempt after Runtime proved the old one ended."""
-
-        return LoopItemExecution(
-            loop_item_id=previous.loop_item_id,
-            cloud_project_id=previous.cloud_project_id,
-            executor_owner_user_id=previous.executor_owner_user_id,
-            agent_id=previous.agent_id,
-            team_id=previous.team_id,
-            backend_task_id=None,
-            automation_run_id=previous.automation_run_id,
-            execution_environment=previous.execution_environment,
-            execution_device_id=previous.execution_device_id,
-            assigner_user_id=previous.assigner_user_id,
-            status=STATUS_QUEUED,
-            priority_weight=previous.priority_weight,
-            queued_at=queued_at,
-            attempt_no=previous.attempt_no + 1,
-            previous_execution_id=previous.id,
-            execution_scope=previous.execution_scope,
-            observed_state=OBSERVED_UNCONFIRMED,
-            sync_state=SYNC_PENDING,
-            retry_attempt=previous.retry_attempt + 1,
-            max_retries=previous.max_retries,
-            approval_status="approved" if previous.approval_status else "",
-            approved_by_user_id=previous.approved_by_user_id,
-            approved_at=previous.approved_at,
-            execution_note=previous.execution_note,
-            execution_payload=LoopItemExecutionService._serialize_execution_intent(
-                runtime_selection=dict(previous.runtime_selection),
-                origin_context=dict(previous.runtime_origin_context),
-            ),
-        )
 
     def mark_dispatch_unknown(
         self,
@@ -2842,13 +2752,13 @@ class LoopItemExecutionService:
                 error=str(exc) or "AI manager finalization failed",
             )
 
-    def _apply_requeued_projection(
+    def _apply_queue_recovery_projection(
         self,
         db: Session,
         *,
         execution: LoopItemExecution,
     ) -> ProjectChatMessage | None:
-        """Project an elected retry to its run and reusable activity card."""
+        """Restore an unstarted execution and its activity to queued state."""
 
         from app.models.delivery import ProjectAutomationRun
 
@@ -3197,7 +3107,6 @@ class LoopItemExecutionService:
                 db,
                 execution_id=row.id,
                 error=self._error_text(error_value),
-                requeue=True,
                 expected_status=row.status,
                 expected_version=row.version,
                 observed_at=now,
@@ -3798,7 +3707,6 @@ class LoopItemExecutionService:
                 "execution_scope": execution.execution_scope,
                 "last_event_seq": execution.last_event_seq,
                 "termination_reason": execution.termination_reason,
-                "retry_attempt": execution.retry_attempt,
                 "error_message": execution.error_message,
                 "execution_note": execution.execution_note,
                 "approval_status": _optional_text(execution.approval_status),
@@ -4087,7 +3995,6 @@ class LoopItemExecutionService:
                 db,
                 execution_id=row.id,
                 error="Runtime reported a failed task during reconciliation",
-                requeue=True,
                 expected_status=row.status,
                 expected_version=row.version,
                 termination_reason="runtime_reconciled_failed",

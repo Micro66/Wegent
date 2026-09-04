@@ -199,7 +199,6 @@ def acknowledge_execution(
             execution_id=execution_id,
             error=error or "Executor rejected runtime task creation",
             note="runtime_start_rejected",
-            requeue=False,
             expected_status=row.status,
             expected_version=row.version,
             termination_reason="runtime_start_rejected",

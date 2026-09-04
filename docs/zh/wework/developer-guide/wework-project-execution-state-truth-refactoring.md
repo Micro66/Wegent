@@ -6,11 +6,11 @@ sidebar_position: 19
 
 > 实现状态：状态真实性主链与并发扩展已完成；Backend、Wework、Executor 全量回归、MySQL 迁移升降级及真实 Electron 桌面验收均已通过。
 >
-> 硬约束：不新建数据库表。本次只扩展已有 MySQL/SQLite `loop_item_executions`，并继续使用已有 `loop_items`、`project_chat_messages` 和 Automation Run。
+> 硬约束：不新建数据库表。本次只调整已有 MySQL/SQLite `loop_item_executions`，并继续使用已有 `loop_items`、`project_chat_messages` 和 Automation Run。
 
 ## 1. 目标与范围
 
-本次解决的不是枚举命名，而是“用户能否拿到可证明的真实状态”。覆盖 project robot 和 automation manager 在 cloud/local Runtime 上的队列、启动、事件、取消、恢复、重试及其 UI 投影。
+本次解决的不是枚举命名，而是“用户能否拿到可证明的真实状态”。覆盖 project robot 和 automation manager 在 cloud/local Runtime 上的队列、启动、事件、取消、恢复、手动重新执行及其 UI 投影。
 
 `TaskResource`/`Subtask` 运行仍以已有 `tasks`/`subtasks` 为自己的权威，不复制到 `loop_item_executions`；本文不声称将两类运行模型合并。
 
@@ -22,7 +22,7 @@ sidebar_position: 19
 - 无法确认时显示 `unknown`，不能猜成失败、成功或可重试。
 - Runtime 终态按 Attempt 身份和单调事件序号进行 CAS。
 - 取消意图和“Runtime 已停止”是两个状态。
-- 运行失败重试必须创建新的已有表行，旧 Attempt 永远保留。
+- Runtime 运行失败直接终止，不自动重试；用户手动重新执行时创建新行，旧 Attempt 永远保留。
 - GET 只读；消息和缓存状态不能反向覆盖执行事实。
 
 ## 2. 权威、投影与连线
@@ -308,26 +308,29 @@ sequenceDiagram
 
 本地 Queue 停止按钮先调用本地 `executions.cancel`，再使用该执行行的 Runtime 地址调用 `cancelRuntimeTask`；不再误用 cloud stop API。
 
-## 9. 失败重试与迟到事件隔离
+## 9. 失败终止、手动重新执行与迟到事件隔离
 
 ```mermaid
 sequenceDiagram
   participant R1 as Runtime Attempt 1
   participant DB as loop_item_executions
+  participant U as User
   participant Q as Queue
   participant R2 as Runtime Attempt 2
   R1->>DB: failed(id=101, seq=90)
   DB->>DB: Attempt 1 → failed（不可逆）
+  R1-->>DB: 迟到 event codex-queue-101 seq=91
+  DB-->>R1: 只匹配已终态 Attempt 1，拒绝污染
+  Note over DB,Q: 不自动创建新 Attempt，不自动入队
+  U->>DB: 手动重新执行
   DB->>DB: INSERT Attempt 2<br/>id=102, attempt_no=2<br/>previous_execution_id=101
   Q->>DB: claim id=102
   Q->>R2: Start codex-queue-102
-  R1-->>DB: 迟到 event codex-queue-101 seq=91
-  DB-->>R1: 只匹配已终态 Attempt 1，拒绝污染
   R2-->>DB: event codex-queue-102
   DB->>DB: 只更新 Attempt 2
 ```
 
-Runtime 已证明失败时才可自动重试并消耗 retry budget。Start 前明确失败可复用原行恢复 queued，因为可以证明 Runtime 进程不存在。
+Runtime 已证明失败时，当前 Attempt 直接进入不可逆 `failed`，不会自动创建或排队新的 Attempt。只有用户明确触发重新执行时才创建新行。Start 前的基础设施失败可复用原行恢复 `queued`，因为可以证明 Runtime 进程不存在；这属于同一执行的队列恢复，不是任务重试。
 
 ## 10. Lease 过期、unknown 与对账
 
@@ -339,7 +342,7 @@ sequenceDiagram
   participant UI as UI
   S->>DB: 找到 lease 过期的 capacity row
   alt claimed 且 start_requested_at 未设置
-    DB->>DB: 原行回 queued，不消耗 retry
+    DB->>DB: 原行回 queued，不创建新 Attempt
     DB-->>UI: queued
   else Start 可能送达
     DB->>DB: sync=stale，保持容量

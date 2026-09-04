@@ -151,7 +151,6 @@ def _execution_view(
             "execution_scope": row.execution_scope,
             "last_event_seq": row.last_event_seq,
             "termination_reason": row.termination_reason,
-            "retry_attempt": row.retry_attempt,
             "error_message": row.error_message,
             "execution_note": row.execution_note,
             "approval_status": _optional_text(row.approval_status),

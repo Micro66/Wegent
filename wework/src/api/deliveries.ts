@@ -260,7 +260,6 @@ export interface CloudLoopItemExecution {
   execution_scope: string
   last_event_seq: number
   termination_reason: string
-  retry_attempt: number
   error_message?: string | null
   execution_note?: string | null
   approval_status?: string | null
@@ -902,7 +901,6 @@ export function createDeliveryApi(client: HttpClient) {
             execution_scope: String(row.executionScope ?? ''),
             last_event_seq: Number(row.lastEventSeq ?? 0),
             termination_reason: String(row.terminationReason ?? ''),
-            retry_attempt: Number(row.retryAttempt ?? 0),
             error_message: row.errorMessage == null ? null : String(row.errorMessage),
             execution_note: row.executionNote == null ? null : String(row.executionNote),
             approval_status: row.approvalStatus == null ? null : String(row.approvalStatus),

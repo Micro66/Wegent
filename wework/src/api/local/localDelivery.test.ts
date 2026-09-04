@@ -96,7 +96,6 @@ describe('local delivery API', () => {
       execution_environment: 'local',
       status: 'completed',
       priority_weight: 0,
-      retry_attempt: 0,
       error_message: '',
       execution_note: '',
       version: 1,

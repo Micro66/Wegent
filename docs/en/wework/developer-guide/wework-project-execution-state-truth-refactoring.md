@@ -6,11 +6,11 @@ sidebar_position: 19
 
 > Implementation status: the state-of-truth path and concurrency extension are complete; full Backend, Wework, and Executor regression, MySQL migration rollback/upgrade, and real Electron desktop acceptance have passed.
 >
-> Hard constraint: no new database tables. This change only extends the existing MySQL/SQLite `loop_item_executions` tables and continues using existing LoopItem, chat-message, and Automation Run storage.
+> Hard constraint: no new database tables. This change only adjusts the existing MySQL/SQLite `loop_item_executions` tables and continues using existing LoopItem, chat-message, and Automation Run storage.
 
 ## 1. Goal and scope
 
-This is not an enum cleanup. It makes every user-visible execution state provable. It covers project-robot and automation-manager queueing, startup, events, cancellation, recovery, retry, and UI projection across cloud and local Runtime.
+This is not an enum cleanup. It makes every user-visible execution state provable. It covers project-robot and automation-manager queueing, startup, events, cancellation, recovery, manual reruns, and UI projection across cloud and local Runtime.
 
 `TaskResource`/`Subtask` execution keeps its own existing `tasks`/`subtasks` authority. It is not copied into `loop_item_executions`, and this document does not claim that the two execution models were merged.
 
@@ -22,7 +22,7 @@ The implementation guarantees:
 - Unprovable state is `unknown`, not guessed failure, success, or retryability.
 - Runtime terminal events use attempt identity, monotonic event sequence, and CAS.
 - Cancellation intent is distinct from proof that Runtime stopped.
-- A Runtime failure retry creates a new row in the existing table and preserves the old attempt.
+- A Runtime failure is terminal and is not retried automatically; a user-triggered rerun creates a new row and preserves the old attempt.
 - GET is read-only; message and cached state cannot overwrite execution truth.
 
 ## 2. Authority and projection connections
@@ -304,26 +304,29 @@ sequenceDiagram
 
 The local Queue stop action first calls local `executions.cancel`, then calls `cancelRuntimeTask` with the identity stored on that row. It no longer calls the cloud stop API.
 
-## 9. Retry and late-event isolation
+## 9. Terminal failure, manual reruns, and late-event isolation
 
 ```mermaid
 sequenceDiagram
   participant R1 as Runtime Attempt 1
   participant DB as loop_item_executions
+  participant U as User
   participant Q as Queue
   participant R2 as Runtime Attempt 2
   R1->>DB: failed(id=101, seq=90)
   DB->>DB: Attempt 1 → failed, irreversible
+  R1-->>DB: late event codex-queue-101 seq=91
+  DB-->>R1: matches terminal Attempt 1 only, reject mutation
+  Note over DB,Q: no automatic attempt creation or enqueue
+  U->>DB: manually rerun
   DB->>DB: INSERT Attempt 2<br/>id=102, attempt_no=2<br/>previous_execution_id=101
   Q->>DB: claim id=102
   Q->>R2: Start codex-queue-102
-  R1-->>DB: late event codex-queue-101 seq=91
-  DB-->>R1: matches terminal Attempt 1 only, reject mutation
   R2-->>DB: event codex-queue-102
   DB->>DB: update Attempt 2 only
 ```
 
-Only a proven Runtime failure may consume retry budget and create a retry attempt. A definitively pre-Start infrastructure failure may restore the same row to queued because no process can exist.
+A proven Runtime failure moves the current attempt to irreversible `failed` and never creates or enqueues another attempt automatically. A new row is created only when a user explicitly requests a rerun. A definitively pre-Start infrastructure failure may restore the same row to `queued` because no process can exist; this is queue recovery for the same execution, not a task retry.
 
 ## 10. Lease expiry, unknown, and reconciliation
 
@@ -335,7 +338,7 @@ sequenceDiagram
   participant UI as UI
   S->>DB: find expired capacity row
   alt claimed and start_requested_at is unset
-    DB->>DB: restore same row to queued, no retry cost
+    DB->>DB: restore same row to queued, no new attempt
     DB-->>UI: queued
   else Start may have arrived
     DB->>DB: sync=stale, retain capacity

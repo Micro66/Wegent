@@ -6,7 +6,7 @@
 
 The queue is a derived view over this table: any non-terminal row is part of
 the queue. The task row keeps the assignment chain; this table records each
-run's lifecycle (approval, queuing, capacity-gated claiming, lease, retries).
+run's lifecycle (approval, queuing, capacity-gated claiming, lease, completion).
 """
 
 import json
@@ -152,8 +152,6 @@ class LoopItemExecution(Base):
     termination_reason = Column(
         String(64), nullable=False, default="", server_default=""
     )
-    retry_attempt = Column(Integer, nullable=False, default=0, server_default="0")
-    max_retries = Column(Integer, nullable=False, default=1, server_default="1")
     error_message = Column(Text, nullable=False, default="")
     execution_note = Column(String(500), nullable=False, default="", server_default="")
     approval_status = Column(String(16), nullable=False, default="", server_default="")
