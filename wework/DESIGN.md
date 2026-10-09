@@ -1838,6 +1838,36 @@ flowchart LR
   read operations: opening a task marks its lifecycle state read; opening a
   cloud entry acknowledges its server record. Opening the popover alone does not
   mark anything read. “Mark all read” acknowledges every available source.
+- System notifications carry the same `wework://` destination as the in-app
+  entry. Task completion targets the device-owned runtime conversation; project
+  assignment targets the backend project Issue. Register the native click action
+  before showing the notification, restore and focus the main window, and retain
+  the destination in the host scheme queue until the renderer navigates. Cloud
+  destinations remain pending while authentication is restored. Do not route
+  new system notifications through task-only tray events. Regression coverage
+  must check the notification capability's native click callback and its exact
+  destination, plus navigation to a newly created task after its first turn
+  when the main window is hidden. Retain the native notification's JavaScript
+  object until click, close, or delivery failure; Electron's platform delegate
+  does not keep that wrapper alive. Garbage-collection regression coverage must
+  verify that delayed clicks survive and terminal events release the wrapper.
+  Notification navigation must select an existing tab for the same device and
+  task first. Otherwise reuse the active tab of the destination kind, its fixed
+  default tab, or another tab of that kind. Create a tab only when that kind has
+  no existing tab; repeated notification clicks must not accumulate tabs.
+
+  ```mermaid
+  flowchart LR
+    TaskCompletion[Runtime completion with task URL] --> Native[System notification]
+    Assignment[Project assignment with Issue URL] --> Native
+    Lifetime[Host retains JavaScript notification until terminal event] --> Native
+    Native -->|Click| Queue[Host scheme queue]
+    Queue --> Main[Restore and focus main window]
+    Queue --> Bridge[WeworkSchemeBridge]
+    BellEntry[In-app notification link] --> Bridge
+    Bridge -->|Navigate then acknowledge| Tabs[Destination workspace tab]
+  ```
+
 - The bell's settings view is the single notification-preference surface.
   Preferences are account-scoped and grouped by Task updates, Collaboration,
   and Other notifications. Each category exposes only channels that it can
