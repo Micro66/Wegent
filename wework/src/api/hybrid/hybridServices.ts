@@ -3,6 +3,11 @@ import {
   resolveLocalPluginDeviceRouteId,
 } from '@/features/plugins/pluginDeviceApi'
 import { createReplyPredictionApi } from '@/api/runtime/replyPredictionApi'
+import { invokeDesktopHost } from '@/api/dsh/desktopHost'
+import {
+  hasNativeModelReference,
+  isNativeModelRuntimeMethod,
+} from '../../../electron/src/host/model-interface-runtime'
 import {
   assertLocalRuntimeSidebarIdentity,
   qualifyLocalRuntimeWork,
@@ -42,6 +47,7 @@ import { REMOTE_TEAM_BACKEND_UNSUPPORTED } from '@/api/runtimeWork'
 import type { ChatStreamHandlers } from '@/stream/chatStream'
 import { createCloudProjectSpaceApi } from './cloudProjectSpaceApi'
 import { createCloudModelCatalog } from './cloudModelCatalog'
+import { canonicalCloudTaskPort, registeredCloudDeviceId } from './canonicalCloudTaskPort'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import {
   notifyWorkbenchCloudArchivesChanged,
@@ -361,11 +367,39 @@ function projectCloudRuntimeEventDeviceId(
 export function createHybridWorkbenchServices(
   options: HybridWorkbenchServicesOptions
 ): WorkbenchServices {
-  const cloudRuntimeIpc = createCloudRuntimeIpcClient({
+  const cloudRuntimeTransport = createCloudRuntimeIpcClient({
     socketBaseUrl: options.socketBaseUrl,
     socketPath: options.socketPath,
     token: options.token,
   })
+  const cloudRuntimeIpc = {
+    ...cloudRuntimeTransport,
+    request: <T>(
+      method: string,
+      params?: Record<string, unknown>,
+      deviceId?: string,
+      timeoutMs?: number
+    ): Promise<T> =>
+      isNativeModelRuntimeMethod(method) && hasNativeModelReference(params)
+        ? invokeDesktopHost<T>('modelConfiguration.requestRuntime', {
+            method,
+            params,
+            deviceId,
+            timeoutMs,
+            expectedUserId: options.user.id,
+            target: {
+              apiBaseUrl: options.apiBaseUrl,
+              socketBaseUrl: options.socketBaseUrl,
+              socketPath: options.socketPath,
+            },
+          })
+        : cloudRuntimeTransport.request<T>(
+            method,
+            params,
+            deviceId,
+            ...(timeoutMs === undefined ? [] : [timeoutMs])
+          ),
+  }
   const cloudServices = createBackendWorkbenchServices({
     apiBaseUrl: options.apiBaseUrl,
     socketBaseUrl: options.socketBaseUrl,
@@ -1410,7 +1444,15 @@ export function createHybridWorkbenchServices(
         })
         const request =
           route === 'local'
-            ? { ...data, executionDeviceId: data.deviceId }
+            ? {
+                ...data,
+                executionDeviceId:
+                  data.cloudProjectId || data.origin?.cloudProjectId
+                    ? await registeredCloudDeviceId(data.deviceId ?? LOCAL_DEVICE_ID, deviceId =>
+                        localServices.standInApi!.deviceIdentity(deviceId)
+                      )
+                    : data.deviceId,
+              }
             : data.wegentTeamId
               ? { ...data, schemaVersion: 3 as const }
               : data
@@ -1638,6 +1680,11 @@ export function createHybridWorkbenchServices(
 
   return {
     ...cloudServices,
+    workspaceRuntimePort: cloudServices.workspaceRuntimePort
+      ? canonicalCloudTaskPort(cloudServices.workspaceRuntimePort, async deviceId =>
+          (await standInApiForDevice(deviceId)).deviceIdentity(deviceId)
+        )
+      : undefined,
     localParticipationIdentity: localServices.localParticipationIdentity,
     localIssueHumanRequestsApi: localServices.localIssueHumanRequestsApi,
     composerCatalogApi: {

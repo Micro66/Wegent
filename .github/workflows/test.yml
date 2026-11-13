@@ -431,6 +431,13 @@ jobs:
           path: backend/reports/mcp-oauth-mysql.xml
           if-no-files-found: error
 
+      - name: Verify share-token upgrade and old-writer storage compatibility
+        working-directory: backend
+        env:
+          SHARE_TOKEN_TEST_MYSQL_URL: mysql+pymysql://root:plugin_auth_test@127.0.0.1:3306/plugin_auth_test
+          PYTHONPATH: .:..
+        run: uv run --no-sync python tests/integration/secure_share_tokens_mysql.py
+
       - name: Verify namespace grants with MySQL connection collations
         working-directory: backend
         env:
@@ -466,6 +473,9 @@ jobs:
 
       - name: Install executor Rust system dependencies
         run: .github/scripts/install-executor-rust-system-dependencies.sh
+
+      - name: Verify Cargo worktree build isolation
+        run: bash scripts/tests/cargo-cache.test.sh
 
       - name: Run executor Rust format check
         working-directory: ./executor
@@ -789,11 +799,11 @@ jobs:
 
       - name: Verify immutable upgrade artifact consumption
         if: matrix.shard == 1
-        run: node --test wework/scripts/published-desktop-release.test.mjs wework/scripts/portable-desktop-release.test.mjs wework/e2e/desktop/modules/inspect-before-start.test.mjs wework/e2e/desktop/modules/desktop-build-flows.test.mjs wework/e2e/desktop/modules/failure-followup.test.mjs wework/e2e/desktop/modules/voice-toolbar-flow.test.mjs wework/e2e/desktop/modules/electron-launch-arguments.test.mjs
+        run: node --test wework/scripts/published-desktop-release.test.mjs wework/scripts/portable-desktop-release.test.mjs wework/e2e/desktop/modules/inspect-before-start.test.mjs wework/e2e/desktop/modules/macos-status-item.test.mjs wework/e2e/desktop/modules/desktop-build-flows.test.mjs wework/e2e/desktop/modules/failure-followup.test.mjs wework/e2e/desktop/modules/voice-toolbar-flow.test.mjs wework/e2e/desktop/modules/electron-launch-arguments.test.mjs
 
       - name: Verify startup theme evidence
         if: matrix.shard == 1
-        run: node --test wework/scripts/startup-theme-evidence.test.mjs
+        run: node --test wework/scripts/startup-theme-evidence.test.mjs wework/scripts/windows-native-runtime.test.mjs
 
       - name: Verify isolated Electron update transport
         if: matrix.shard == 1

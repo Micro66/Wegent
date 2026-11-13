@@ -32,7 +32,9 @@ use crate::task_store::task_update_timestamp;
 use super::chat_support::{access_denied, error_ack, expired, internal_error};
 
 /// `CANCEL_KEY_PREFIX`.
-const CANCEL_KEY_PREFIX: &str = "chat:cancel:";
+pub(crate) fn cancel_key(subtask_id: i64) -> String {
+    format!("chat:cancel:{subtask_id}")
+}
 /// `CANCEL_FLAG_TTL`.
 const CANCEL_FLAG_TTL: u64 = 300;
 /// `settings.CANCELLING_STUCK_TIMEOUT_SECONDS`.
@@ -116,6 +118,29 @@ pub(crate) async fn cancel(
                         None,
                     )
                     .await;
+                    // A runtime that never received the turn cannot send a terminal callback.
+                    use crate::internal_callback::{
+                        emitter,
+                        event::{EventType, ExecutionEvent},
+                        session,
+                    };
+                    let event = ExecutionEvent::new(EventType::Cancelled, info.task_id, subtask_id);
+                    if let Err(error) =
+                        session::publish_callback_event(redis, subtask_id, &event).await
+                    {
+                        tracing::warn!(subtask_id, %error, "local cancellation callback failed");
+                    }
+                    if let Err(error) = emitter::emit_terminal_frames(
+                        redis,
+                        &event,
+                        Some(user_id),
+                        &Value::Null,
+                        None,
+                    )
+                    .await
+                    {
+                        tracing::warn!(subtask_id, %error, "local cancellation notification failed");
+                    }
                 }
             }
             tracing::info!(
@@ -245,7 +270,7 @@ async fn deliver_cancel(
             return Ok(false);
         };
         use brz_redis::Redis as _;
-        let key = format!("{CANCEL_KEY_PREFIX}{subtask_id}");
+        let key = cancel_key(subtask_id);
         return match redis.set_ex(key.as_str(), CANCEL_FLAG_TTL, "true").await {
             Ok(()) => Ok(true),
             Err(error) => {

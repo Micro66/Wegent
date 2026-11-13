@@ -1,4 +1,5 @@
 import { DshExecutorTransportError } from '@/api/dsh/executorTransport'
+import * as desktopHost from '@/api/dsh/desktopHost'
 import { ApiError } from '@/api/http'
 import { selectedModelExecutionFields } from '@/features/workbench/runtimeModelSelection'
 import { useWorkbenchModels } from '@/features/workbench/useWorkbenchModels'
@@ -1064,6 +1065,51 @@ describe('qualified local sidebar routing', () => {
 })
 
 describe('local project execution ownership', () => {
+  it('uses the registered cloud device in the Issue execution grant without changing the local route', async () => {
+    mocks.localListDevices.mockResolvedValue([
+      { id: 0, device_id: 'local-device', device_type: 'local', status: 'online' },
+    ])
+    mocks.localServices.standInApi.deviceIdentity.mockResolvedValue({
+      backendDeviceId: 'app-record-42',
+    })
+    mocks.localCreateRuntimeTask.mockResolvedValue({ accepted: true, taskId: 'issue-task' })
+    const services = createServices()
+    const request = {
+      deviceId: 'local-device',
+      taskId: 'issue-task',
+      cloudProjectId: 'project',
+      runtime: 'codex' as const,
+      message: 'create a delivery',
+      origin: { type: 'issue_dispatch' as const, cloudProjectId: 'project', loopItemId: 'issue' },
+    }
+    await services.runtimeWorkApi!.createRuntimeTask(request)
+    expect(mocks.localCreateRuntimeTask).toHaveBeenCalledWith({
+      ...request,
+      executionDeviceId: 'app-record-42',
+    })
+    expect(mocks.cloudCreateRuntimeTask).not.toHaveBeenCalled()
+    expect(request.deviceId).toBe('local-device')
+    mocks.localCreateRuntimeTask.mockClear()
+    mocks.localServices.standInApi.deviceIdentity.mockRejectedValueOnce(
+      new Error('Wait for this Runtime to register with the backend')
+    )
+    await expect(services.runtimeWorkApi!.createRuntimeTask(request)).rejects.toThrow(
+      'Wait for this Runtime to register'
+    )
+    expect(mocks.localCreateRuntimeTask).not.toHaveBeenCalled()
+    await services.runtimeWorkApi!.createRuntimeTask({
+      deviceId: 'local-device',
+      runtime: 'codex',
+      message: 'continue working offline',
+    })
+    expect(mocks.localCreateRuntimeTask).toHaveBeenCalledExactlyOnceWith({
+      deviceId: 'local-device',
+      executionDeviceId: 'local-device',
+      runtime: 'codex',
+      message: 'continue working offline',
+    })
+  })
+
   it('uses a backend-free service for creation and continuation after reopening', async () => {
     const services = createServices()
     mocks.cloudCreateRuntimeTask.mockClear()
@@ -1196,6 +1242,90 @@ describe('execution status write-back on history reads', () => {
 })
 
 describe('createHybridWorkbenchServices', () => {
+  it('keeps remote history reads on their authorized transport when an address retains model metadata', async () => {
+    const invoke = vi.spyOn(desktopHost, 'invokeDesktopHost')
+    const request = {
+      deviceId: 'cloud-device',
+      taskId: 'runtime-1',
+      query: 'needle',
+      runtimeHandle: {
+        modelConfig: {
+          wework_model_kind: 'model-interface',
+          wework_local_model_id: 'local-model:deleted',
+          model_provider: 'local-deleted',
+        },
+      },
+    }
+    const result = { matches: [], totalMatches: 0, isCapped: false }
+    mocks.cloudRuntimeIpcRequest.mockReset().mockResolvedValue(result)
+    try {
+      await expect(
+        createServices().runtimeWorkApi!.searchRuntimeTranscript(request)
+      ).resolves.toEqual(result)
+      expect(mocks.cloudRuntimeIpcRequest).toHaveBeenCalledExactlyOnceWith(
+        'runtime.tasks.transcript.search',
+        request,
+        'cloud-device'
+      )
+      expect(
+        invoke.mock.calls.some(([capability]) => capability === 'modelConfiguration.requestRuntime')
+      ).toBe(false)
+    } finally {
+      invoke.mockRestore()
+    }
+  })
+
+  it('routes native model references with the selected cloud destination, account and device', async () => {
+    const invoke = vi
+      .spyOn(desktopHost, 'invokeDesktopHost')
+      .mockResolvedValue({ automation: { id: 'created' } })
+    try {
+      const services = createServices()
+      await services.automationApi!.createAutomation({
+        source: 'cloud',
+        name: 'Native model',
+        prompt: 'Run remotely',
+        schedule: { type: 'interval', value: 1, unit: 'hours' },
+        timezone: 'UTC',
+        enabled: true,
+        conversationMode: 'independent',
+        notificationPolicy: 'all_runs',
+        taskRequest: {
+          deviceId: 'cloud-device',
+          teamId: 1,
+          runtime: 'codex',
+          message: 'Run remotely',
+          modelConfig: {
+            wework_model_kind: 'model-interface',
+            wework_local_model_id: 'local-model:saved',
+            model_provider: 'local-saved',
+            api_key: 'dummy',
+          },
+        },
+      })
+      expect(invoke).toHaveBeenCalledWith(
+        'modelConfiguration.requestRuntime',
+        expect.objectContaining({
+          method: 'runtime.automations.create',
+          deviceId: 'cloud-device',
+          expectedUserId: 9,
+          target: {
+            apiBaseUrl: 'https://cloud.example.com/api',
+            socketBaseUrl: 'https://cloud.example.com',
+            socketPath: '/socket.io',
+          },
+        })
+      )
+      expect(
+        mocks.cloudRuntimeIpcRequest.mock.calls.some(
+          ([method]) => method === 'runtime.automations.create'
+        )
+      ).toBe(false)
+    } finally {
+      invoke.mockRestore()
+    }
+  })
+
   it('sends current cloud credentials and model identity to the remote prediction device', async () => {
     mocks.cloudRuntimeIpcRequest.mockResolvedValue({ suggestion: '请继续' })
     const services = createServices()

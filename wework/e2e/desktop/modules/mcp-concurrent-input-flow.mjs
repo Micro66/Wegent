@@ -14,7 +14,7 @@ import {
   writeFile,
 } from './shared.mjs'
 import { requestExecutor } from './executor-rpc.mjs'
-import { waitForValue } from './workspace-agent-setup.mjs'
+import { restartCodexWhenIdle } from './executor-restart-readiness.mjs'
 import {
   CONCURRENT_CASES,
   CONCURRENT_SCENARIO,
@@ -274,17 +274,12 @@ async function verifyConcurrentCases(control) {
   }
 }
 
-async function restartCodexWhenIdle(control) {
-  // Background reads can defer an idle-only restart without throwing.
-  await waitForValue(
-    async () => JSON.parse(await control.command('restartLocalCodexAppServerIfIdle', 'body')),
-    result => result.restarted === true,
-    'The native app server did not become idle before loading the model catalog',
-    DEFAULT_STEP_TIMEOUT_MS
-  )
-}
-
 export async function verifyConcurrentMcpUserInput(control) {
+  const restartWhenIdle = () =>
+    restartCodexWhenIdle(
+      async () => JSON.parse(await control.command('restartLocalCodexAppServerIfIdle', 'body')),
+      DEFAULT_STEP_TIMEOUT_MS
+    )
   const { models } = await requestExecutor(
     control,
     'runtime.codex.catalog.overrides.read',
@@ -304,19 +299,31 @@ export async function verifyConcurrentMcpUserInput(control) {
     },
     DEFAULT_STEP_TIMEOUT_MS
   )
+  let verificationFailed = false
   try {
-    await restartCodexWhenIdle(control)
+    await restartWhenIdle()
     await verifyConcurrentCases(control)
+  } catch (error) {
+    verificationFailed = true
+    throw error
   } finally {
-    await requestExecutor(
-      control,
-      'runtime.codex.catalog.overrides.write',
-      {
-        slug: DEFAULT_MODEL_ID,
-        entry: model.effective,
-      },
-      DEFAULT_STEP_TIMEOUT_MS
-    )
-    await restartCodexWhenIdle(control)
+    try {
+      await requestExecutor(
+        control,
+        'runtime.codex.catalog.overrides.write',
+        {
+          slug: DEFAULT_MODEL_ID,
+          entry: model.effective,
+        },
+        DEFAULT_STEP_TIMEOUT_MS
+      )
+      await restartWhenIdle()
+    } catch (error) {
+      if (!verificationFailed) throw error
+      console.error(
+        'Failed to restore the Codex model catalog after concurrent MCP verification',
+        error
+      )
+    }
   }
 }

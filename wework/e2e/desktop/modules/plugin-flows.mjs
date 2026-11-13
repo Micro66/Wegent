@@ -1,4 +1,5 @@
 import { realpath } from 'node:fs/promises'
+import { withNativePluginDecision } from './native-plugin-approval.mjs'
 
 import {
   assertMentionRenderedAsToken,
@@ -9,6 +10,10 @@ import {
 } from './conversation-layout.mjs'
 
 import { sendPrompt } from './conversation-navigation.mjs'
+import {
+  configuredMarketplaceSource,
+  marketplaceSourcesMatch,
+} from './marketplace-config-evidence.mjs'
 import { waitForBlankConversation } from './memory-tool-flows.mjs'
 import { telemetryEvents } from './response-protocol.mjs'
 import { requestExecutor } from './executor-rpc.mjs'
@@ -204,8 +209,9 @@ async function verifyCoreDshPluginManagement({
   await control.command('fill', '[data-testid="core-dsh-plugin-spec-input"]', {
     value: pluginRoot,
   })
-  await control.command('click', '[data-testid="core-dsh-plugin-install-button"]')
-  await control.command('click', '[data-testid="core-dsh-plugin-install-confirm"]')
+  await withNativePluginDecision(control, () =>
+    control.command('clickWhenEnabled', '[data-testid="core-dsh-plugin-install-button"]')
+  )
   await control.command('waitFor', '[data-testid="core-dsh-plugin-row-dsh-core-e2e-plugin"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
@@ -320,25 +326,26 @@ async function initializeBlankCodexHome({ codexHome, control }) {
 
 async function waitForBundledMarketplaceRegistration(codexHome, expectedSource) {
   const configPath = join(codexHome, 'config.toml')
-  // toml_edit uses literal strings for paths containing Windows separators.
-  const expectedSourceLines = expectedSource
-    ? [`source = ${JSON.stringify(expectedSource)}`, `source = '${expectedSource}'`]
-    : []
   const startedAt = Date.now()
   let registration
   while (Date.now() - startedAt < WORKBENCH_READY_TIMEOUT_MS) {
     if (await pathExists(configPath)) {
       const config = await readFile(configPath, 'utf8')
+      const configuredSource = configuredMarketplaceSource(config)
+      const sourceMatches =
+        !expectedSource || (await marketplaceSourcesMatch(configuredSource, expectedSource))
       registration = {
         marketplacePresent: config.includes('[marketplaces.wework-personal]'),
         localSourceTypePresent: config.includes('source_type = "local"'),
-        expectedSourcePresent: expectedSourceLines.some(line => config.includes(line)),
+        configuredSource,
+        expectedSource,
+        expectedSourcePresent: sourceMatches,
         bytes: Buffer.byteLength(config),
       }
       if (
         config.includes('[marketplaces.wework-personal]') &&
         config.includes('source_type = "local"') &&
-        (!expectedSource || expectedSourceLines.some(line => config.includes(line)))
+        sourceMatches
       ) {
         return
       }
